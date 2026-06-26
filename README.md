@@ -7,8 +7,6 @@
 
 **Community:** Join [Reddit](https://www.reddit.com/r/muapi) & [Discord](https://discord.gg/QhTrNRU4r3) for discussions and support
 
-> **Latest Gemini Omni model from Google best prompts and resources:** [Gemini Omni Resources](https://github.com/Anil-matcha/Awesome-Gemini-Omni-API-Prompts)
-
 > 🤖 **Automate media generations with AI coding agents:** [Generative-Media-Skills](https://github.com/SamurAIGPT/Generative-Media-Skills) — a library of skills that let agents like **Claude Code**, **Codex**, and other coding assistants drive 200+ image/video models end-to-end (prompt → generate → edit → stitch) directly from your terminal. Perfect for building automated media pipelines without touching a UI.
 
 > 🎬 **Seedance 2.5 prompts & API guide:** [awesome-seedance-2.5-api-prompts](https://github.com/Anil-matcha/awesome-seedance-2.5-api-prompts) — Curated prompt templates, camera control vocabulary, MuAPI reference, and cinematic examples for Seedance 2.5 video generation.

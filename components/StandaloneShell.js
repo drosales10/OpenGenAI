@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ImageStudio, VideoStudio, ClippingStudio, VibeMotionStudio, LipSyncStudio, RecastStudio, CinemaStudio, AudioStudio, MarketingStudio, WorkflowStudio, AgentStudio, AppsStudio, getUserBalance } from 'studio';
+import { getInternalApiBase, getInternalApiKey, setInternalApiBase, setInternalApiKey } from '@/src/lib/internalApi';
 
 const DesignAgentStudio = dynamic(() => import('studio').then(mod => mod.DesignAgentStudio), {
   ssr: false,
@@ -11,6 +12,7 @@ const DesignAgentStudio = dynamic(() => import('studio').then(mod => mod.DesignA
 });
 import axios from 'axios';
 import ApiKeyModal from './ApiKeyModal';
+import ProviderKeysSettings from './ProviderKeysSettings';
 
 const TABS = [
   { id: 'image',   label: 'Image Studio' },
@@ -33,7 +35,7 @@ const STORAGE_KEY = 'muapi_key';
 export default function StandaloneShell() {
   const params = useParams();
   const router = useRouter();
-  const slug = params?.slug || []; 
+  const slug = useMemo(() => params?.slug || [], [params?.slug]);
   const idFromParams = params?.id;
   const tabFromParams = params?.tab;
 
@@ -68,6 +70,7 @@ export default function StandaloneShell() {
 
   const [balance, setBalance] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState('general');
   const [isHeaderVisible, setIsHeaderVisible] = useState(true);
   const [hasMounted, setHasMounted] = useState(false);
   const [showVadooBanner, setShowVadooBanner] = useState(() => {
@@ -78,6 +81,22 @@ export default function StandaloneShell() {
   // Drag and Drop State
   const [isDragging, setIsDragging] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState(null);
+
+  // Settings > Users state
+  const [internalApiBaseValue, setInternalApiBaseValue] = useState('');
+  const [internalApiKeyValue, setInternalApiKeyValue] = useState('');
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersStatus, setUsersStatus] = useState('');
+  const [users, setUsers] = useState([]);
+  const [usersFilter, setUsersFilter] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserRole, setNewUserRole] = useState('user');
+  const [currentInternalUser, setCurrentInternalUser] = useState({ id: null, role: null });
+  const [userKeysByUserId, setUserKeysByUserId] = useState({});
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [providerKeysStatus, setProviderKeysStatus] = useState('');
 
   // Sync tab with URL if user navigates manually or via browser back/forward
   useEffect(() => {
@@ -230,6 +249,222 @@ export default function StandaloneShell() {
     setDroppedFiles(null);
   }, []);
 
+  const loadUsers = useCallback(async () => {
+    if (!internalApiKeyValue.trim()) {
+      setUsersStatus('Add an internal API key to manage users.');
+      return;
+    }
+
+    setUsersLoading(true);
+    try {
+      const base = (internalApiBaseValue || '').trim().replace(/\/$/, '');
+      const response = await fetch(`${base}/api/db/users`, {
+        method: 'GET',
+        headers: {
+          'x-internal-api-key': internalApiKeyValue.trim(),
+        },
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+
+      setUsers(Array.isArray(data.users) ? data.users : []);
+      setCurrentInternalUser({
+        id: data.current_user_id ? Number(data.current_user_id) : null,
+        role: data.current_user_role || null,
+      });
+      setUsersStatus('Users loaded.');
+    } catch (error) {
+      setUsersStatus(error.message || 'Failed to load users');
+      setUsers([]);
+    } finally {
+      setUsersLoading(false);
+    }
+  }, [internalApiBaseValue, internalApiKeyValue]);
+
+  const saveInternalAccess = useCallback(() => {
+    setInternalApiBase(internalApiBaseValue.trim());
+    setInternalApiKey(internalApiKeyValue.trim());
+    setUsersStatus('Internal backend access saved.');
+  }, [internalApiBaseValue, internalApiKeyValue]);
+
+  const bootstrapInternalKey = useCallback(async () => {
+    setUsersStatus('Creating internal key...');
+    try {
+      const base = (internalApiBaseValue || '').trim().replace(/\/$/, '');
+      const response = await fetch(`${base}/api/auth/internal-key`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ auto_init: true }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+
+      const apiKeyValue = data.api_key || '';
+      setInternalApiKeyValue(apiKeyValue);
+      setInternalApiBase(internalApiBaseValue.trim());
+      setInternalApiKey(apiKeyValue);
+      setUsersStatus('Internal key created and saved.');
+      await loadUsers();
+    } catch (error) {
+      setUsersStatus(error.message || 'Failed to create internal key');
+    }
+  }, [internalApiBaseValue, loadUsers]);
+
+  const requestInternalApi = useCallback(async (path, options = {}) => {
+    const base = (internalApiBaseValue || '').trim().replace(/\/$/, '');
+    const response = await fetch(`${base}${path}`, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...(options.method && options.method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
+        'x-internal-api-key': internalApiKeyValue.trim(),
+      },
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok === false) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    return data;
+  }, [internalApiBaseValue, internalApiKeyValue]);
+
+  const loadAuditLogs = useCallback(async () => {
+    if (!internalApiKeyValue.trim()) return;
+
+    setAuditLoading(true);
+    try {
+      const data = await requestInternalApi('/api/db/audit?limit=30', { method: 'GET' });
+      setAuditLogs(Array.isArray(data.logs) ? data.logs : []);
+    } catch {
+      setAuditLogs([]);
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [requestInternalApi, internalApiKeyValue]);
+
+  const createOrUpsertUser = useCallback(async () => {
+    setUsersStatus('Saving user...');
+    try {
+      await requestInternalApi('/api/db/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: newUserEmail.trim(),
+          display_name: newUserName.trim(),
+          role: newUserRole,
+        }),
+      });
+      setNewUserEmail('');
+      setNewUserName('');
+      setNewUserRole('user');
+      await loadUsers();
+      await loadAuditLogs();
+      setUsersStatus('User saved.');
+    } catch (error) {
+      setUsersStatus(error.message || 'Failed to save user');
+    }
+  }, [newUserEmail, newUserName, newUserRole, requestInternalApi, loadUsers, loadAuditLogs]);
+
+  const updateUserRecord = useCallback(async (userId, displayName, role) => {
+    setUsersStatus(`Updating user #${userId}...`);
+    try {
+      await requestInternalApi('/api/db/users', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          id: Number(userId),
+          display_name: displayName,
+          role,
+        }),
+      });
+      await loadUsers();
+      await loadAuditLogs();
+      setUsersStatus(`User #${userId} updated.`);
+    } catch (error) {
+      setUsersStatus(error.message || 'Failed to update user');
+    }
+  }, [requestInternalApi, loadUsers, loadAuditLogs]);
+
+  const loadUserKeys = useCallback(async (userId) => {
+    setUsersStatus(`Loading keys for user #${userId}...`);
+    try {
+      const data = await requestInternalApi(`/api/db/users/keys?user_id=${Number(userId)}`, { method: 'GET' });
+      setUserKeysByUserId((prev) => ({ ...prev, [userId]: data.keys || [] }));
+      setUsersStatus(`Keys loaded for user #${userId}.`);
+    } catch (error) {
+      setUsersStatus(error.message || 'Failed to load keys');
+    }
+  }, [requestInternalApi]);
+
+  const createUserKey = useCallback(async (userId) => {
+    setUsersStatus(`Creating key for user #${userId}...`);
+    try {
+      const data = await requestInternalApi('/api/db/users/keys', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: Number(userId),
+          key_name: `user-${userId}-key`,
+        }),
+      });
+
+      if (data.api_key) {
+        window.prompt('Copy this internal API key now (shown once):', data.api_key);
+      }
+      await loadUsers();
+      await loadUserKeys(userId);
+      await loadAuditLogs();
+      setUsersStatus(`Key created for user #${userId}.`);
+    } catch (error) {
+      setUsersStatus(error.message || 'Failed to create key');
+    }
+  }, [requestInternalApi, loadUsers, loadUserKeys, loadAuditLogs]);
+
+  const deactivateUserKey = useCallback(async (userId, keyId) => {
+    setUsersStatus(`Deactivating key #${keyId}...`);
+    try {
+      await requestInternalApi('/api/db/users/keys', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          user_id: Number(userId),
+          key_id: Number(keyId),
+        }),
+      });
+      await loadUsers();
+      await loadUserKeys(userId);
+      await loadAuditLogs();
+      setUsersStatus(`Key #${keyId} deactivated.`);
+    } catch (error) {
+      setUsersStatus(error.message || 'Failed to deactivate key');
+    }
+  }, [requestInternalApi, loadUsers, loadUserKeys, loadAuditLogs]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+
+    setInternalApiBaseValue(getInternalApiBase());
+    setInternalApiKeyValue(getInternalApiKey());
+  }, [showSettings, settingsTab]);
+
+  useEffect(() => {
+    if (!showSettings || settingsTab !== 'users') return;
+    if (!internalApiKeyValue.trim()) return;
+    void loadUsers();
+    void loadAuditLogs();
+  }, [showSettings, settingsTab, internalApiKeyValue, loadUsers, loadAuditLogs]);
+
+  const filteredUsers = users.filter((user) => {
+    const term = usersFilter.trim().toLowerCase();
+    if (!term) return true;
+    const haystack = `${user.id} ${user.email || ''} ${user.display_name || ''} ${user.role || ''}`.toLowerCase();
+    return haystack.includes(term);
+  });
+
   if (!hasMounted) return (
     <div className="min-h-screen bg-[#050505] flex items-center justify-center">
       <div className="animate-spin text-[#22d3ee] text-3xl">◌</div>
@@ -376,30 +611,284 @@ export default function StandaloneShell() {
       {/* Settings Modal */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 animate-fade-in-up">
-          <div className="bg-[#0a0a0a] border border-white/10 rounded-xl p-8 w-full max-w-sm shadow-2xl">
+          <div className={`bg-[#0a0a0a] border border-white/10 rounded-xl p-6 w-full ${settingsTab === 'users' || settingsTab === 'provider-keys' ? 'max-w-5xl' : 'max-w-sm'} shadow-2xl max-h-[90vh] overflow-y-auto`}>
             <h2 className="text-white font-bold text-lg mb-2">Settings</h2>
-            <p className="text-white/40 text-[13px] mb-8">
+            <p className="text-white/40 text-[13px] mb-5">
               Manage your AI studio preferences and authentication.
             </p>
-            
-            <div className="space-y-4 mb-8">
-              <div className="bg-white/5 border border-white/[0.03] rounded-md p-4">
-                <label className="block text-xs font-bold text-white/30 mb-2">
-                   Active API Key
-                </label>
-                <div className="text-[13px] font-mono text-white/80">
-                  {apiKey.slice(0, 8)}••••••••••••••••
-                </div>
-              </div>
+
+            <div className="flex gap-2 mb-5">
+              <button
+                onClick={() => setSettingsTab('general')}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold border transition-colors ${settingsTab === 'general' ? 'bg-white/10 text-white border-white/20' : 'bg-white/5 text-white/60 border-white/10 hover:text-white'}`}
+              >
+                General
+              </button>
+              <button
+                onClick={() => setSettingsTab('provider-keys')}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold border transition-colors ${settingsTab === 'provider-keys' ? 'bg-white/10 text-white border-white/20' : 'bg-white/5 text-white/60 border-white/10 hover:text-white'}`}
+              >
+                Claves API
+              </button>
+              <button
+                onClick={() => setSettingsTab('users')}
+                className={`px-3 py-1.5 rounded-md text-xs font-bold border transition-colors ${settingsTab === 'users' ? 'bg-white/10 text-white border-white/20' : 'bg-white/5 text-white/60 border-white/10 hover:text-white'}`}
+              >
+                Users Admin
+              </button>
             </div>
 
+            {settingsTab === 'general' && (
+              <div className="space-y-4 mb-7">
+                <div className="bg-white/5 border border-white/[0.03] rounded-md p-4">
+                  <label className="block text-xs font-bold text-white/30 mb-2">
+                    Active API Key
+                  </label>
+                  <div className="text-[13px] font-mono text-white/80">
+                    {apiKey.slice(0, 8)}••••••••••••••••
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {settingsTab === 'provider-keys' && (
+              <div className="space-y-3 mb-5">
+                <p className="text-white/40 text-[13px]">
+                  Configura tus propias claves API por módulo. Se almacenan de forma persistente en PostgreSQL.
+                </p>
+                <ProviderKeysSettings
+                  internalApiBase={internalApiBaseValue}
+                  internalApiKey={internalApiKeyValue}
+                  onStatusChange={(msg) => setProviderKeysStatus(msg)}
+                />
+                {providerKeysStatus && (
+                  <div className="text-xs text-white/55">{providerKeysStatus}</div>
+                )}
+              </div>
+            )}
+
+            {settingsTab === 'users' && (
+              <div className="space-y-4 mb-5">
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 bg-white/5 border border-white/[0.03] rounded-md p-3">
+                  <input
+                    value={internalApiBaseValue}
+                    onChange={(e) => setInternalApiBaseValue(e.target.value)}
+                    placeholder="Backend base URL (e.g. http://localhost:3001)"
+                    className="h-10 rounded-md bg-black/30 border border-white/10 px-3 text-sm text-white/90 outline-none"
+                  />
+                  <input
+                    value={internalApiKeyValue}
+                    onChange={(e) => setInternalApiKeyValue(e.target.value)}
+                    placeholder="Internal API key"
+                    type="password"
+                    className="h-10 rounded-md bg-black/30 border border-white/10 px-3 text-sm text-white/90 outline-none"
+                  />
+                  <button
+                    onClick={saveInternalAccess}
+                    className="h-10 rounded-md bg-[#22d3ee] text-black text-xs font-bold hover:brightness-110 transition-all"
+                  >
+                    Save Access
+                  </button>
+                  <button
+                    onClick={() => void bootstrapInternalKey()}
+                    className="h-10 rounded-md bg-cyan-500/20 border border-cyan-400/30 text-cyan-200 text-xs font-bold hover:bg-cyan-500/30 transition-all"
+                  >
+                    Create Internal Key
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-3 bg-white/5 border border-white/[0.03] rounded-md p-3">
+                  <input
+                    value={newUserEmail}
+                    onChange={(e) => setNewUserEmail(e.target.value)}
+                    placeholder="new-user@domain.com"
+                    className="h-10 rounded-md bg-black/30 border border-white/10 px-3 text-sm text-white/90 outline-none"
+                  />
+                  <input
+                    value={newUserName}
+                    onChange={(e) => setNewUserName(e.target.value)}
+                    placeholder="Display name"
+                    className="h-10 rounded-md bg-black/30 border border-white/10 px-3 text-sm text-white/90 outline-none"
+                  />
+                  <select
+                    value={newUserRole}
+                    onChange={(e) => setNewUserRole(e.target.value)}
+                    className="h-10 rounded-md bg-black/30 border border-white/10 px-3 text-sm text-white/90 outline-none"
+                  >
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                  <button
+                    onClick={createOrUpsertUser}
+                    disabled={currentInternalUser.role !== 'admin'}
+                    className="h-10 rounded-md bg-[#22d3ee] text-black text-xs font-bold hover:brightness-110 transition-all disabled:opacity-40"
+                  >
+                    Create / Upsert
+                  </button>
+                </div>
+
+                <div className="flex gap-3">
+                  <input
+                    value={usersFilter}
+                    onChange={(e) => setUsersFilter(e.target.value)}
+                    placeholder="Filter by id, email, name, role"
+                    className="flex-1 h-10 rounded-md bg-white/5 border border-white/10 px-3 text-sm text-white/90 outline-none"
+                  />
+                  <button
+                    onClick={() => {
+                      void loadUsers();
+                      void loadAuditLogs();
+                    }}
+                    className="h-10 px-4 rounded-md bg-white/10 text-white text-xs font-bold hover:bg-white/15 transition-all"
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                {currentInternalUser.role !== 'admin' && (
+                  <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
+                    Your current internal role is not admin. User create/update/key actions are restricted.
+                  </div>
+                )}
+
+                <div className="space-y-2 max-h-[42vh] overflow-y-auto pr-1">
+                  {filteredUsers.map((user) => {
+                    const isSelf = Number(user.id) === Number(currentInternalUser.id || 0);
+                    const userKeys = userKeysByUserId[user.id] || [];
+                    return (
+                      <div key={user.id} className="border border-white/10 rounded-md p-3 bg-white/[0.02]">
+                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                          <div className="text-sm font-semibold text-white">#{user.id} {user.email || 'no-email'}</div>
+                          <div className="text-[11px] text-white/45">keys {Number(user.api_keys_active || 0)}/{Number(user.api_keys_total || 0)}</div>
+                        </div>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-5 gap-2">
+                          <input
+                            defaultValue={user.display_name || ''}
+                            id={`user-name-${user.id}`}
+                            className="lg:col-span-2 h-9 rounded-md bg-black/30 border border-white/10 px-3 text-sm text-white/90 outline-none"
+                          />
+                          <select
+                            defaultValue={user.role || 'user'}
+                            id={`user-role-${user.id}`}
+                            disabled={isSelf}
+                            className="h-9 rounded-md bg-black/30 border border-white/10 px-3 text-sm text-white/90 outline-none disabled:opacity-50"
+                            title={isSelf ? 'You cannot edit your own role' : 'User role'}
+                          >
+                            <option value="user">user</option>
+                            <option value="admin">admin</option>
+                          </select>
+                          <button
+                            onClick={() => {
+                              const nameInput = document.getElementById(`user-name-${user.id}`);
+                              const roleInput = document.getElementById(`user-role-${user.id}`);
+                              const nameValue = nameInput?.value || '';
+                              const roleValue = isSelf ? user.role : (roleInput?.value || user.role);
+                              void updateUserRecord(user.id, nameValue, roleValue);
+                            }}
+                            disabled={currentInternalUser.role !== 'admin'}
+                            className="h-9 rounded-md bg-white/10 text-white text-xs font-bold hover:bg-white/20 transition-all disabled:opacity-40"
+                          >
+                            Save
+                          </button>
+                          <button
+                            onClick={() => void createUserKey(user.id)}
+                            disabled={currentInternalUser.role !== 'admin'}
+                            className="h-9 rounded-md bg-cyan-500/20 border border-cyan-400/30 text-cyan-200 text-xs font-bold hover:bg-cyan-500/30 transition-all disabled:opacity-40"
+                          >
+                            New Key
+                          </button>
+                        </div>
+
+                        {isSelf && (
+                          <div className="mt-2 text-[11px] text-amber-300">Self-role lock: you can edit your display name, but not your own role.</div>
+                        )}
+
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            onClick={() => void loadUserKeys(user.id)}
+                            className="h-8 px-3 rounded-md bg-white/5 border border-white/10 text-white/80 text-[11px] font-bold hover:bg-white/10 transition-all"
+                          >
+                            Load Keys
+                          </button>
+                        </div>
+
+                        {userKeys.length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            {userKeys.map((key) => (
+                              <div key={key.id} className="flex flex-wrap items-center gap-2 text-[11px] bg-black/30 border border-white/10 rounded px-2 py-1.5">
+                                <span className="text-white/85 font-mono">{key.key_prefix}...</span>
+                                <span className={`px-1.5 py-0.5 rounded ${key.is_active ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-500/20 text-zinc-300'}`}>
+                                  {key.is_active ? 'active' : 'inactive'}
+                                </span>
+                                <span className="text-white/45">{key.key_name || 'key'}</span>
+                                {key.is_active && currentInternalUser.role === 'admin' && (
+                                  <button
+                                    onClick={() => void deactivateUserKey(user.id, key.id)}
+                                    className="ml-auto px-2 py-1 rounded bg-red-500/15 border border-red-400/30 text-red-300 hover:bg-red-500/25 transition-all"
+                                  >
+                                    Deactivate
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {!filteredUsers.length && (
+                    <div className="text-sm text-white/45 border border-white/10 rounded-md p-4 text-center">
+                      {usersLoading ? 'Loading users...' : 'No users found for current filter.'}
+                    </div>
+                  )}
+                </div>
+
+                <div className={`text-xs ${usersStatus.toLowerCase().includes('fail') || usersStatus.toLowerCase().includes('error') ? 'text-red-300' : 'text-white/55'}`}>
+                  {usersStatus || 'Users panel ready.'}
+                </div>
+
+                <div className="border border-white/10 rounded-md p-3 bg-white/[0.02]">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="text-xs font-bold text-white/70">Recent Admin Actions</div>
+                    <button
+                      onClick={() => void loadAuditLogs()}
+                      className="h-7 px-2 rounded bg-white/10 text-white/80 text-[11px] font-bold hover:bg-white/20"
+                    >
+                      Reload
+                    </button>
+                  </div>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {auditLogs.map((log) => (
+                      <div key={log.id} className="text-[11px] text-white/70 bg-black/30 border border-white/10 rounded px-2 py-1.5">
+                        <div>
+                          <span className="text-cyan-300">{log.action}</span>
+                          <span className="text-white/40"> by </span>
+                          <span>{log.actor_email || `user#${log.actor_user_id || 'unknown'}`}</span>
+                        </div>
+                        <div className="text-white/45">{new Date(log.created_at).toLocaleString()}</div>
+                      </div>
+                    ))}
+                    {!auditLogs.length && (
+                      <div className="text-[11px] text-white/45 border border-white/10 rounded px-2 py-2 text-center">
+                        {auditLoading ? 'Loading audit logs...' : 'No audit logs yet.'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-3">
-              <button
-                onClick={handleKeyChange}
-                className="flex-1 h-10 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 text-xs font-semibold transition-all"
-              >
-                Change Key
-              </button>
+              {settingsTab === 'general' && (
+                <button
+                  onClick={handleKeyChange}
+                  className="flex-1 h-10 rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 text-xs font-semibold transition-all"
+                >
+                  Change Key
+                </button>
+              )}
               <button
                 onClick={() => setShowSettings(false)}
                 className="flex-1 h-10 rounded-md bg-white/5 text-white/80 hover:bg-white/10 text-xs font-semibold transition-all border border-white/5"

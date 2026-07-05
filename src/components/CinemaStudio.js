@@ -4,6 +4,7 @@ import { CameraControls } from './CameraControls.js';
 import { buildNanoBananaPrompt, CAMERA_MAP, LENS_MAP, FOCAL_PERSPECTIVE, APERTURE_EFFECT } from '../lib/promptUtils.js';
 import { AuthModal } from './AuthModal.js';
 import { t } from '../lib/i18n.js';
+import { getInternalApiKey } from '../lib/internalApi.js';
 
 export function CinemaStudio() {
     const container = document.createElement('div');
@@ -539,7 +540,8 @@ export function CinemaStudio() {
         if (!basePrompt) return;
 
         const apiKey = localStorage.getItem('muapi_key');
-        if (!apiKey) {
+        const internalKey = getInternalApiKey();
+        if (!apiKey && !internalKey) {
             AuthModal(() => generateBtn.click());
             return;
         }

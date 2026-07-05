@@ -11,6 +11,7 @@ import { AuthModal } from './AuthModal.js';
 import { t } from '../lib/i18n.js';
 import { createUploadPicker } from './UploadPicker.js';
 import { savePendingJob, removePendingJob, getPendingJobs } from '../lib/pendingJobs.js';
+import { getInternalApiKey } from '../lib/internalApi.js';
 
 function createInlineInstructions(type) {
     const el = document.createElement('div');
@@ -1083,7 +1084,8 @@ export function ImageStudio() {
         if (!pending.length) return;
 
         const apiKey = localStorage.getItem('muapi_key');
-        if (!apiKey) return; // can't poll without key; jobs remain for next time
+        const internalKey = getInternalApiKey();
+        if (!apiKey && !internalKey) return; // can't poll without credentials; jobs remain for next time
 
         const banner = document.createElement('div');
         banner.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[200] bg-[#111] border border-white/10 text-white text-sm px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3';
@@ -1092,6 +1094,7 @@ export function ImageStudio() {
 
         let remaining = pending.length;
         pending.forEach(async (job) => {
+            let alreadyRemoved = false;
             const elapsedAttempts = Math.floor((Date.now() - job.submittedAt) / job.interval);
             const attemptsLeft = Math.max(1, job.maxAttempts - elapsedAttempts);
             try {
@@ -1102,8 +1105,16 @@ export function ImageStudio() {
                 }
             } catch (e) {
                 console.warn('[ImageStudio] Pending job failed on resume:', job.requestId, e.message);
+                removePendingJob(job.requestId, {
+                    status: 'failed',
+                    errorMessage: e.message,
+                    eventType: 'job_resume_failed',
+                });
+                alreadyRemoved = true;
             } finally {
-                removePendingJob(job.requestId);
+                if (!alreadyRemoved) {
+                    removePendingJob(job.requestId);
+                }
                 remaining--;
                 if (remaining === 0) banner.remove();
                 else banner.querySelector('.banner-text').textContent = `Resuming ${remaining} pending generation${remaining > 1 ? 's' : ''}…`;
@@ -1238,7 +1249,8 @@ export function ImageStudio() {
 
         // ── Remote API path ───────────────────────────────────────────────────
         const apiKey = localStorage.getItem('muapi_key');
-        if (!apiKey) {
+        const internalKey = getInternalApiKey();
+        if (!apiKey && !internalKey) {
             AuthModal(() => generateBtn.click());
             return;
         }
@@ -1303,7 +1315,13 @@ export function ImageStudio() {
             }
         } catch (e) {
             hadError = true;
-            if (capturedRequestId) removePendingJob(capturedRequestId);
+            if (capturedRequestId) {
+                removePendingJob(capturedRequestId, {
+                    status: 'failed',
+                    errorMessage: e.message,
+                    eventType: 'job_failed',
+                });
+            }
             console.error(e);
             // Restore hero so the page doesn't look broken after a failed generation
             hero.classList.remove('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');

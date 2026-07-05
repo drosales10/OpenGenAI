@@ -1,0 +1,150 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SystemSetting {
+  settingKey   String   @id @map("setting_key")
+  settingValue Json     @map("setting_value")
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("system_settings")
+}
+
+model User {
+  id          BigInt   @id @default(autoincrement())
+  email       String?  @unique
+  displayName String?  @map("display_name")
+  role        String   @default("user")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  apiKeys             ApiKey[]
+  jobs                Job[]
+  providerRequestLogs ProviderRequestLog[]
+  adminActions        AdminAuditLog[] @relation("AdminAuditActor")
+  adminTargets        AdminAuditLog[] @relation("AdminAuditTarget")
+
+  @@map("users")
+}
+
+model ApiKey {
+  id         BigInt    @id @default(autoincrement())
+  userId     BigInt    @map("user_id")
+  keyName    String    @map("key_name")
+  keyPrefix  String    @map("key_prefix")
+  keyHash    String    @map("key_hash")
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model Job {
+  id             BigInt    @id @default(autoincrement())
+  requestId      String?   @map("request_id")
+  userId         BigInt?   @map("user_id")
+  provider       String
+  jobType        String    @map("job_type")
+  status         String    @default("pending")
+  approvalStatus String    @default("approved") @map("approval_status")
+  autoApproved   Boolean   @default(true) @map("auto_approved")
+  payload        Json
+  result         Json?
+  errorMessage   String?   @map("error_message")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  jobEvents JobEvent[]
+
+  @@index([requestId], map: "jobs_request_id_unique_idx")
+  @@map("jobs")
+}
+
+model JobEvent {
+  id           BigInt   @id @default(autoincrement())
+  jobId        BigInt   @map("job_id")
+  eventType    String   @map("event_type")
+  eventPayload Json     @map("event_payload")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@map("job_events")
+}
+
+model ModelRegistry {
+  id        BigInt   @id @default(autoincrement())
+  modelKey   String   @unique @map("model_key")
+  provider  String
+  modelKind String   @map("model_kind")
+  isActive  Boolean  @default(true) @map("is_active")
+  metadata  Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("model_registry")
+}
+
+model ProviderRequestLog {
+  id         BigInt    @id @default(autoincrement())
+  provider   String
+  routeGroup String    @map("route_group")
+  method     String
+  targetPath String    @map("target_path")
+  projectId  String?   @map("project_id")
+  statusCode Int?      @map("status_code")
+  durationMs Int?      @map("duration_ms")
+  authMode   String    @map("auth_mode")
+  userId     BigInt?   @map("user_id")
+  requestMeta Json     @map("request_meta")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([provider, createdAt], map: "provider_request_logs_provider_created_idx")
+  @@index([projectId, createdAt], map: "provider_request_logs_project_created_idx")
+  @@map("provider_request_logs")
+}
+
+model AdminAuditLog {
+  id          BigInt    @id @default(autoincrement())
+  actorUserId BigInt?   @map("actor_user_id")
+  actorEmail  String?   @map("actor_email")
+  action      String
+  targetUserId BigInt?  @map("target_user_id")
+  targetType  String?   @map("target_type")
+  targetId    String?   @map("target_id")
+  details     Json
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actorUser  User? @relation("AdminAuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  targetUser User? @relation("AdminAuditTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt], map: "admin_audit_logs_created_idx")
+  @@index([action, createdAt], map: "admin_audit_logs_action_created_idx")
+  @@map("admin_audit_logs")
+}
+
+model ProviderCredential {
+  id          BigInt   @id @default(autoincrement())
+  moduleId    String   @map("module_id")
+  providerId  String   @map("provider_id")
+  credentials Json     @default("{}")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([moduleId, providerId])
+  @@index([moduleId], map: "provider_credentials_module_idx")
+  @@map("provider_credentials")
+}

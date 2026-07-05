@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
+import { resolveMuapiProxyAuth } from '@/src/lib/server/muapiProxyAuth';
+import { recordProviderRequest } from '@/src/lib/db/providerUsage';
+import { enforceMuapiQuota } from '@/src/lib/server/muapiQuota';
+import { extractProviderRequestContext } from '@/src/lib/server/providerRequestContext';
 
 const MUAPI_BASE = 'https://api.muapi.ai';
 
-function getApiKey(request) {
-    // Priority 1: Direct x-api-key header
+function getLegacyApiKey(request) {
     const headerKey = request.headers.get('x-api-key');
     if (headerKey) return headerKey;
-
-    // Priority 2: muapi_key cookie (used by the fixed builder library)
     const cookieKey = request.cookies.get('muapi_key')?.value;
     return cookieKey;
 }
@@ -21,6 +22,8 @@ function cleanHeaders(request) {
 }
 
 export async function GET(request, { params }) {
+    const startedAt = Date.now();
+    const requestContext = extractProviderRequestContext(request);
     const slug = await params;
     const pathSegments = slug.path || [];
     const path = pathSegments.join('/');
@@ -32,9 +35,14 @@ export async function GET(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/app/${effectivePath}${search}`;
 
     const headers = cleanHeaders(request);
-
-    const apiKey = getApiKey(request);
-    if (apiKey) headers.set('x-api-key', apiKey);
+    const auth = await resolveMuapiProxyAuth(request, getLegacyApiKey, 'app');
+    if (!auth.ok) return auth.response;
+    const quota = await enforceMuapiQuota({ routeGroup: 'app', userId: auth.userId, projectId: requestContext.projectId });
+    if (!quota.ok) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'GET', targetPath: `/app/${effectivePath}`, statusCode: 429, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', reason: 'quota' } });
+        return quota.response;
+    }
+    headers.set('x-api-key', auth.apiKey);
 
     try {
         const response = await fetch(targetUrl, {
@@ -58,13 +66,18 @@ export async function GET(request, { params }) {
             };
         }
 
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'GET', targetPath: `/app/${effectivePath}`, statusCode: response.status, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '' } });
+
         return NextResponse.json(data, { status: response.status });
     } catch (error) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'GET', targetPath: `/app/${effectivePath}`, statusCode: 500, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', error: error.message } });
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
 
 export async function POST(request, { params }) {
+    const startedAt = Date.now();
+    const requestContext = extractProviderRequestContext(request);
     const slug = await params;
     const pathSegments = slug.path || [];
     const path = pathSegments.join('/');
@@ -73,9 +86,14 @@ export async function POST(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/app/${path}${search}`;
 
     const headers = cleanHeaders(request);
-
-    const apiKey = getApiKey(request);
-    if (apiKey) headers.set('x-api-key', apiKey);
+    const auth = await resolveMuapiProxyAuth(request, getLegacyApiKey, 'app');
+    if (!auth.ok) return auth.response;
+    const quota = await enforceMuapiQuota({ routeGroup: 'app', userId: auth.userId, projectId: requestContext.projectId });
+    if (!quota.ok) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'POST', targetPath: `/app/${path}`, statusCode: 429, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', reason: 'quota' } });
+        return quota.response;
+    }
+    headers.set('x-api-key', auth.apiKey);
 
     try {
         const body = await request.arrayBuffer();
@@ -86,13 +104,17 @@ export async function POST(request, { params }) {
         });
 
         const data = await response.json();
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'POST', targetPath: `/app/${path}`, statusCode: response.status, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '' } });
         return NextResponse.json(data, { status: response.status });
     } catch (error) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'POST', targetPath: `/app/${path}`, statusCode: 500, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', error: error.message } });
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
 
 export async function DELETE(request, { params }) {
+    const startedAt = Date.now();
+    const requestContext = extractProviderRequestContext(request);
     const slug = await params;
     const pathSegments = slug.path || [];
     const path = pathSegments.join('/');
@@ -101,9 +123,14 @@ export async function DELETE(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/app/${path}${search}`;
 
     const headers = cleanHeaders(request);
-
-    const apiKey = getApiKey(request);
-    if (apiKey) headers.set('x-api-key', apiKey);
+    const auth = await resolveMuapiProxyAuth(request, getLegacyApiKey, 'app');
+    if (!auth.ok) return auth.response;
+    const quota = await enforceMuapiQuota({ routeGroup: 'app', userId: auth.userId, projectId: requestContext.projectId });
+    if (!quota.ok) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'DELETE', targetPath: `/app/${path}`, statusCode: 429, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', reason: 'quota' } });
+        return quota.response;
+    }
+    headers.set('x-api-key', auth.apiKey);
 
     try {
         const response = await fetch(targetUrl, {
@@ -111,13 +138,17 @@ export async function DELETE(request, { params }) {
             headers
         });
         const data = await response.json();
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'DELETE', targetPath: `/app/${path}`, statusCode: response.status, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '' } });
         return NextResponse.json(data, { status: response.status });
     } catch (error) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'DELETE', targetPath: `/app/${path}`, statusCode: 500, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', error: error.message } });
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
 
 export async function PUT(request, { params }) {
+    const startedAt = Date.now();
+    const requestContext = extractProviderRequestContext(request);
     const slug = await params;
     const pathSegments = slug.path || [];
     const path = pathSegments.join('/');
@@ -126,9 +157,14 @@ export async function PUT(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/app/${path}${search}`;
 
     const headers = cleanHeaders(request);
-
-    const apiKey = getApiKey(request);
-    if (apiKey) headers.set('x-api-key', apiKey);
+    const auth = await resolveMuapiProxyAuth(request, getLegacyApiKey, 'app');
+    if (!auth.ok) return auth.response;
+    const quota = await enforceMuapiQuota({ routeGroup: 'app', userId: auth.userId, projectId: requestContext.projectId });
+    if (!quota.ok) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'PUT', targetPath: `/app/${path}`, statusCode: 429, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', reason: 'quota' } });
+        return quota.response;
+    }
+    headers.set('x-api-key', auth.apiKey);
 
     try {
         const body = await request.arrayBuffer();
@@ -138,8 +174,10 @@ export async function PUT(request, { params }) {
             body
         });
         const data = await response.json();
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'PUT', targetPath: `/app/${path}`, statusCode: response.status, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '' } });
         return NextResponse.json(data, { status: response.status });
     } catch (error) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'app', method: 'PUT', targetPath: `/app/${path}`, statusCode: 500, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', error: error.message } });
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }

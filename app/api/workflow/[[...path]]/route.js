@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
+import { resolveMuapiProxyAuth } from '@/src/lib/server/muapiProxyAuth';
+import { recordProviderRequest } from '@/src/lib/db/providerUsage';
+import { enforceMuapiQuota } from '@/src/lib/server/muapiQuota';
+import { extractProviderRequestContext } from '@/src/lib/server/providerRequestContext';
 
 const MUAPI_BASE = 'https://api.muapi.ai';
 
-function getApiKey(request) {
-    // Priority 1: Direct x-api-key header
+function getLegacyApiKey(request) {
     const headerKey = request.headers.get('x-api-key');
     if (headerKey) return headerKey;
-
-    // Priority 2: muapi_key cookie (used by the fixed builder library)
     const cookieKey = request.cookies.get('muapi_key')?.value;
     return cookieKey;
 }
@@ -21,6 +22,8 @@ function cleanHeaders(request) {
 }
 
 export async function GET(request, { params }) {
+    const startedAt = Date.now();
+    const requestContext = extractProviderRequestContext(request);
     const slug = await params;
     const pathSegments = slug.path || [];
     const path = pathSegments.join('/');
@@ -29,10 +32,16 @@ export async function GET(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/workflow/${path}${search}`;
 
     const headers = cleanHeaders(request);
+    const auth = await resolveMuapiProxyAuth(request, getLegacyApiKey, 'workflow');
+    if (!auth.ok) return auth.response;
 
-    const apiKey = getApiKey(request);
-    console.log(`[proxy GET] ${targetUrl} | apiKey: ${apiKey ? apiKey.slice(0,8)+'...' : 'MISSING'}`);
-    if (apiKey) headers.set('x-api-key', apiKey);
+    const quota = await enforceMuapiQuota({ routeGroup: 'workflow', userId: auth.userId, projectId: requestContext.projectId });
+    if (!quota.ok) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'workflow', method: 'GET', targetPath: `/workflow/${path}`, statusCode: 429, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', reason: 'quota' } });
+        return quota.response;
+    }
+
+    headers.set('x-api-key', auth.apiKey);
 
     try {
         const response = await fetch(targetUrl, {
@@ -40,16 +49,39 @@ export async function GET(request, { params }) {
             method: 'GET',
         });
         const data = await response.json();
-        if (path.includes('get-workflow-def')) {
-            console.log(`[proxy GET] get-workflow-def response: is_owner=${data?.is_owner}, workflow_id=${data?.workflow_id}`);
-        }
+        await recordProviderRequest({
+            provider: 'muapi',
+            routeGroup: 'workflow',
+            method: 'GET',
+            targetPath: `/workflow/${path}`,
+            statusCode: response.status,
+            durationMs: Date.now() - startedAt,
+            authMode: auth.authMode,
+            userId: auth.userId,
+            projectId: requestContext.projectId,
+            requestMeta: { query: search || '' },
+        });
         return NextResponse.json(data, { status: response.status });
     } catch (error) {
+        await recordProviderRequest({
+            provider: 'muapi',
+            routeGroup: 'workflow',
+            method: 'GET',
+            targetPath: `/workflow/${path}`,
+            statusCode: 500,
+            durationMs: Date.now() - startedAt,
+            authMode: auth.authMode,
+            userId: auth.userId,
+            projectId: requestContext.projectId,
+            requestMeta: { query: search || '', error: error.message },
+        });
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
 
 export async function POST(request, { params }) {
+    const startedAt = Date.now();
+    const requestContext = extractProviderRequestContext(request);
     const slug = await params;
     const pathSegments = slug.path || [];
     const path = pathSegments.join('/');
@@ -58,33 +90,58 @@ export async function POST(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/workflow/${path}${search}`;
 
     const headers = cleanHeaders(request);
+    const auth = await resolveMuapiProxyAuth(request, getLegacyApiKey, 'workflow');
+    if (!auth.ok) return auth.response;
 
-    const apiKey = getApiKey(request);
-    console.log(`[proxy POST] ${targetUrl} | apiKey: ${apiKey ? apiKey.slice(0,8)+'...' : 'MISSING'} | cookie: ${request.cookies.get('muapi_key')?.value?.slice(0,8) || 'NONE'} | header: ${request.headers.get('x-api-key')?.slice(0,8) || 'NONE'}`);
-    if (apiKey) headers.set('x-api-key', apiKey);
+    const quota = await enforceMuapiQuota({ routeGroup: 'workflow', userId: auth.userId, projectId: requestContext.projectId });
+    if (!quota.ok) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'workflow', method: 'POST', targetPath: `/workflow/${path}`, statusCode: 429, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', reason: 'quota' } });
+        return quota.response;
+    }
+
+    headers.set('x-api-key', auth.apiKey);
 
     try {
         const body = await request.arrayBuffer();
-        // Decode body to see what workflow_id is being sent
-        try {
-            const parsed = JSON.parse(Buffer.from(body).toString('utf-8'));
-            console.log(`[proxy POST] body: workflow_id=${parsed.workflow_id}, source_workflow_id=${parsed.source_workflow_id}, name=${parsed.name}`);
-        } catch(e) { /* ignore decode errors */ }
-
         const response = await fetch(targetUrl, {
             method: 'POST',
             headers,
             body
         });
         const data = await response.json();
-        console.log(`[proxy POST] response: status=${response.status}`, JSON.stringify(data).slice(0, 200));
+        await recordProviderRequest({
+            provider: 'muapi',
+            routeGroup: 'workflow',
+            method: 'POST',
+            targetPath: `/workflow/${path}`,
+            statusCode: response.status,
+            durationMs: Date.now() - startedAt,
+            authMode: auth.authMode,
+            userId: auth.userId,
+            projectId: requestContext.projectId,
+            requestMeta: { query: search || '' },
+        });
         return NextResponse.json(data, { status: response.status });
     } catch (error) {
+        await recordProviderRequest({
+            provider: 'muapi',
+            routeGroup: 'workflow',
+            method: 'POST',
+            targetPath: `/workflow/${path}`,
+            statusCode: 500,
+            durationMs: Date.now() - startedAt,
+            authMode: auth.authMode,
+            userId: auth.userId,
+            projectId: requestContext.projectId,
+            requestMeta: { query: search || '', error: error.message },
+        });
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
 
 export async function DELETE(request, { params }) {
+    const startedAt = Date.now();
+    const requestContext = extractProviderRequestContext(request);
     const slug = await params;
     const pathSegments = slug.path || [];
     const path = pathSegments.join('/');
@@ -93,9 +150,16 @@ export async function DELETE(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/workflow/${path}${search}`;
 
     const headers = cleanHeaders(request);
+    const auth = await resolveMuapiProxyAuth(request, getLegacyApiKey, 'workflow');
+    if (!auth.ok) return auth.response;
 
-    const apiKey = getApiKey(request);
-    if (apiKey) headers.set('x-api-key', apiKey);
+    const quota = await enforceMuapiQuota({ routeGroup: 'workflow', userId: auth.userId, projectId: requestContext.projectId });
+    if (!quota.ok) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'workflow', method: 'DELETE', targetPath: `/workflow/${path}`, statusCode: 429, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', reason: 'quota' } });
+        return quota.response;
+    }
+
+    headers.set('x-api-key', auth.apiKey);
 
     try {
         const response = await fetch(targetUrl, {
@@ -103,13 +167,39 @@ export async function DELETE(request, { params }) {
             headers
         });
         const data = await response.json();
+        await recordProviderRequest({
+            provider: 'muapi',
+            routeGroup: 'workflow',
+            method: 'DELETE',
+            targetPath: `/workflow/${path}`,
+            statusCode: response.status,
+            durationMs: Date.now() - startedAt,
+            authMode: auth.authMode,
+            userId: auth.userId,
+            projectId: requestContext.projectId,
+            requestMeta: { query: search || '' },
+        });
         return NextResponse.json(data, { status: response.status });
     } catch (error) {
+        await recordProviderRequest({
+            provider: 'muapi',
+            routeGroup: 'workflow',
+            method: 'DELETE',
+            targetPath: `/workflow/${path}`,
+            statusCode: 500,
+            durationMs: Date.now() - startedAt,
+            authMode: auth.authMode,
+            userId: auth.userId,
+            projectId: requestContext.projectId,
+            requestMeta: { query: search || '', error: error.message },
+        });
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
 
 export async function PUT(request, { params }) {
+    const startedAt = Date.now();
+    const requestContext = extractProviderRequestContext(request);
     const slug = await params;
     const pathSegments = slug.path || [];
     const path = pathSegments.join('/');
@@ -118,9 +208,16 @@ export async function PUT(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/workflow/${path}${search}`;
 
     const headers = cleanHeaders(request);
+    const auth = await resolveMuapiProxyAuth(request, getLegacyApiKey, 'workflow');
+    if (!auth.ok) return auth.response;
 
-    const apiKey = getApiKey(request);
-    if (apiKey) headers.set('x-api-key', apiKey);
+    const quota = await enforceMuapiQuota({ routeGroup: 'workflow', userId: auth.userId, projectId: requestContext.projectId });
+    if (!quota.ok) {
+        await recordProviderRequest({ provider: 'muapi', routeGroup: 'workflow', method: 'PUT', targetPath: `/workflow/${path}`, statusCode: 429, durationMs: Date.now() - startedAt, authMode: auth.authMode, userId: auth.userId, projectId: requestContext.projectId, requestMeta: { query: search || '', reason: 'quota' } });
+        return quota.response;
+    }
+
+    headers.set('x-api-key', auth.apiKey);
 
     try {
         const body = await request.arrayBuffer();
@@ -130,8 +227,32 @@ export async function PUT(request, { params }) {
             body
         });
         const data = await response.json();
+        await recordProviderRequest({
+            provider: 'muapi',
+            routeGroup: 'workflow',
+            method: 'PUT',
+            targetPath: `/workflow/${path}`,
+            statusCode: response.status,
+            durationMs: Date.now() - startedAt,
+            authMode: auth.authMode,
+            userId: auth.userId,
+            projectId: requestContext.projectId,
+            requestMeta: { query: search || '' },
+        });
         return NextResponse.json(data, { status: response.status });
     } catch (error) {
+        await recordProviderRequest({
+            provider: 'muapi',
+            routeGroup: 'workflow',
+            method: 'PUT',
+            targetPath: `/workflow/${path}`,
+            statusCode: 500,
+            durationMs: Date.now() - startedAt,
+            authMode: auth.authMode,
+            userId: auth.userId,
+            projectId: requestContext.projectId,
+            requestMeta: { query: search || '', error: error.message },
+        });
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }

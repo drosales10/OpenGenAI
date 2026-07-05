@@ -1,4 +1,5 @@
 import { getModelById, getVideoModelById, getI2IModelById, getI2VModelById, getV2VModelById, getLipSyncModelById } from './models.js';
+import { buildInternalApiUrl, getInternalApiKey, withInternalApiKeyHeaders } from './internalApi.js';
 
 export class MuapiClient {
     constructor() {
@@ -6,7 +7,35 @@ export class MuapiClient {
         this.baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.DEV) ? '' : 'https://api.muapi.ai';
     }
 
+    usesInternalProxy() {
+        return Boolean(getInternalApiKey());
+    }
+
+    resolveUrl(path) {
+        if (this.usesInternalProxy()) {
+            return buildInternalApiUrl(`/api/providers/muapi${path}`);
+        }
+        return `${this.baseUrl}${path}`;
+    }
+
+    getHeaders(key, includeContentType = true) {
+        const headers = includeContentType ? { 'Content-Type': 'application/json' } : {};
+
+        if (this.usesInternalProxy()) {
+            return withInternalApiKeyHeaders(headers);
+        }
+
+        return {
+            ...headers,
+            'x-api-key': key,
+        };
+    }
+
     getKey() {
+        if (this.usesInternalProxy()) {
+            return '';
+        }
+
         const key = window.__MUAPI_KEY__ || localStorage.getItem('muapi_key');
         if (!key) throw new Error('API Key missing. Please set it in Settings.');
         return key;
@@ -30,7 +59,7 @@ export class MuapiClient {
         // Resolve endpoint from model definition
         const modelInfo = getModelById(params.model);
         const endpoint = modelInfo?.endpoint || params.model;
-        const url = `${this.baseUrl}/api/v1/${endpoint}`;
+        const url = this.resolveUrl(`/api/v1/${endpoint}`);
 
         // Build payload matching the API's expected format
         const finalPayload = {
@@ -72,10 +101,7 @@ export class MuapiClient {
             // Step 1: Submit the task
             const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': key
-                },
+                headers: this.getHeaders(key),
                 body: JSON.stringify(finalPayload)
             });
 
@@ -121,7 +147,7 @@ export class MuapiClient {
      * @param {number} interval - Polling interval in ms (default 2000)
      */
     async pollForResult(requestId, key, maxAttempts = 60, interval = 2000) {
-        const pollUrl = `${this.baseUrl}/api/v1/predictions/${requestId}/result`;
+        const pollUrl = this.resolveUrl(`/api/v1/predictions/${requestId}/result`);
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             await new Promise(resolve => setTimeout(resolve, interval));
@@ -131,10 +157,7 @@ export class MuapiClient {
             try {
                 const response = await fetch(pollUrl, {
                     method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-api-key': key
-                    }
+                    headers: this.getHeaders(key)
                 });
 
                 if (!response.ok) {
@@ -173,7 +196,7 @@ export class MuapiClient {
 
         const modelInfo = getVideoModelById(params.model);
         const endpoint = modelInfo?.endpoint || params.model;
-        const url = `${this.baseUrl}/api/v1/${endpoint}`;
+        const url = this.resolveUrl(`/api/v1/${endpoint}`);
 
         const finalPayload = {};
 
@@ -192,10 +215,7 @@ export class MuapiClient {
         try {
             const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'x-api-key': key
-                },
+                headers: this.getHeaders(key),
                 body: JSON.stringify(finalPayload)
             });
 
@@ -240,7 +260,7 @@ export class MuapiClient {
         const key = this.getKey();
         const modelInfo = getI2IModelById(params.model);
         const endpoint = modelInfo?.endpoint || params.model;
-        const url = `${this.baseUrl}/api/v1/${endpoint}`;
+        const url = this.resolveUrl(`/api/v1/${endpoint}`);
 
         const finalPayload = {};
 
@@ -268,7 +288,7 @@ export class MuapiClient {
         try {
             const response = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+                headers: this.getHeaders(key),
                 body: JSON.stringify(finalPayload)
             });
 
@@ -310,7 +330,7 @@ export class MuapiClient {
         const key = this.getKey();
         const modelInfo = getI2VModelById(params.model);
         const endpoint = modelInfo?.endpoint || params.model;
-        const url = `${this.baseUrl}/api/v1/${endpoint}`;
+        const url = this.resolveUrl(`/api/v1/${endpoint}`);
 
         const finalPayload = {};
 
@@ -359,7 +379,7 @@ export class MuapiClient {
         try {
             const response = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+                headers: this.getHeaders(key),
                 body: JSON.stringify(finalPayload)
             });
 
@@ -393,7 +413,7 @@ export class MuapiClient {
      */
     async uploadFile(file) {
         const key = this.getKey();
-        const url = `${this.baseUrl}/api/v1/upload_file`;
+        const url = this.resolveUrl('/api/v1/upload_file');
 
         const formData = new FormData();
         formData.append('file', file);
@@ -402,7 +422,7 @@ export class MuapiClient {
 
         const response = await fetch(url, {
             method: 'POST',
-            headers: { 'x-api-key': key },
+            headers: this.getHeaders(key, false),
             body: formData
         });
 
@@ -433,7 +453,7 @@ export class MuapiClient {
         const key = this.getKey();
         const modelInfo = getV2VModelById(params.model);
         const endpoint = modelInfo?.endpoint || params.model;
-        const url = `${this.baseUrl}/api/v1/${endpoint}`;
+        const url = this.resolveUrl(`/api/v1/${endpoint}`);
 
         const videoField = modelInfo?.videoField || 'video_url';
         const finalPayload = { [videoField]: params.video_url };
@@ -451,7 +471,7 @@ export class MuapiClient {
         try {
             const response = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+                headers: this.getHeaders(key),
                 body: JSON.stringify(finalPayload)
             });
 
@@ -495,7 +515,7 @@ export class MuapiClient {
         const key = this.getKey();
         const modelInfo = getLipSyncModelById(params.model);
         const endpoint = modelInfo?.endpoint || params.model;
-        const url = `${this.baseUrl}/api/v1/${endpoint}`;
+        const url = this.resolveUrl(`/api/v1/${endpoint}`);
 
         const finalPayload = {};
 
@@ -512,7 +532,7 @@ export class MuapiClient {
         try {
             const response = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+                headers: this.getHeaders(key),
                 body: JSON.stringify(finalPayload)
             });
 

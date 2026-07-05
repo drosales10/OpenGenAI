@@ -4,6 +4,7 @@ import { AuthModal } from './AuthModal.js';
 import { t } from '../lib/i18n.js';
 import { createUploadPicker } from './UploadPicker.js';
 import { savePendingJob, removePendingJob, getPendingJobs } from '../lib/pendingJobs.js';
+import { getInternalApiKey } from '../lib/internalApi.js';
 
 export function LipSyncStudio() {
     const container = document.createElement('div');
@@ -170,7 +171,8 @@ export function LipSyncStudio() {
         const file = e.target.files[0];
         if (!file) return;
         const apiKey = localStorage.getItem('muapi_key');
-        if (!apiKey) { AuthModal(() => videoFileInput.click()); return; }
+        const internalKey = getInternalApiKey();
+        if (!apiKey && !internalKey) { AuthModal(() => videoFileInput.click()); return; }
         showVideoSpinner();
         try {
             uploadedVideoUrl = await muapi.uploadFile(file);
@@ -238,7 +240,8 @@ export function LipSyncStudio() {
         const file = e.target.files[0];
         if (!file) return;
         const apiKey = localStorage.getItem('muapi_key');
-        if (!apiKey) { AuthModal(() => audioFileInput.click()); return; }
+        const internalKey = getInternalApiKey();
+        if (!apiKey && !internalKey) { AuthModal(() => audioFileInput.click()); return; }
         showAudioSpinner();
         try {
             uploadedAudioUrl = await muapi.uploadFile(file);
@@ -589,22 +592,34 @@ export function LipSyncStudio() {
         const pending = getPendingJobs('lipsync');
         if (!pending.length) return;
         const apiKey = localStorage.getItem('muapi_key');
-        if (!apiKey) return;
+        const internalKey = getInternalApiKey();
+        if (!apiKey && !internalKey) return;
         const banner = document.createElement('div');
         banner.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[200] bg-[#111] border border-white/10 text-white text-sm px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3';
         banner.innerHTML = `<span class="animate-spin text-primary">◌</span> <span class="banner-text">Resuming ${pending.length} pending generation${pending.length > 1 ? 's' : ''}…</span>`;
         document.body.appendChild(banner);
         let remaining = pending.length;
         pending.forEach(async (job) => {
+            let alreadyRemoved = false;
             const elapsedAttempts = Math.floor((Date.now() - job.submittedAt) / job.interval);
             const attemptsLeft = Math.max(1, job.maxAttempts - elapsedAttempts);
             try {
                 const result = await muapi.pollForResult(job.requestId, apiKey, attemptsLeft, job.interval);
                 const url = result.outputs?.[0] || result.url || result.output?.url;
                 if (url) addToHistory({ id: job.requestId, url, ...job.historyMeta, timestamp: new Date().toISOString() });
-            } catch (e) { console.warn('[LipSyncStudio] Pending job failed:', job.requestId, e.message); }
+            } catch (e) {
+                console.warn('[LipSyncStudio] Pending job failed:', job.requestId, e.message);
+                removePendingJob(job.requestId, {
+                    status: 'failed',
+                    errorMessage: e.message,
+                    eventType: 'job_resume_failed',
+                });
+                alreadyRemoved = true;
+            }
             finally {
-                removePendingJob(job.requestId);
+                if (!alreadyRemoved) {
+                    removePendingJob(job.requestId);
+                }
                 remaining--;
                 if (remaining === 0) banner.remove();
                 else banner.querySelector('.banner-text').textContent = `Resuming ${remaining} pending generation${remaining > 1 ? 's' : ''}…`;
@@ -669,7 +684,8 @@ export function LipSyncStudio() {
         }
 
         const apiKey = localStorage.getItem('muapi_key');
-        if (!apiKey) { AuthModal(() => generateBtn.click()); return; }
+        const internalKey = getInternalApiKey();
+        if (!apiKey && !internalKey) { AuthModal(() => generateBtn.click()); return; }
 
         hero.classList.add('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');
         generateBtn.disabled = true;
@@ -717,7 +733,13 @@ export function LipSyncStudio() {
             }
         } catch (e) {
             hadError = true;
-            if (capturedRequestId) removePendingJob(capturedRequestId);
+            if (capturedRequestId) {
+                removePendingJob(capturedRequestId, {
+                    status: 'failed',
+                    errorMessage: e.message,
+                    eventType: 'job_failed',
+                });
+            }
             console.error(e);
             hero.classList.remove('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');
             generateBtn.innerHTML = `Error: ${e.message.slice(0, 60)}`;

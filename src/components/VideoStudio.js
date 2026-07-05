@@ -6,6 +6,7 @@ import { createUploadPicker } from './UploadPicker.js';
 import { savePendingJob, removePendingJob, getPendingJobs } from '../lib/pendingJobs.js';
 import { localAI, isLocalAIAvailable } from '../lib/localInferenceClient.js';
 import { isWan2gpModelId, getLocalModelById, localT2VModels, localI2VModels } from '../lib/localModels.js';
+import { getInternalApiKey } from '../lib/internalApi.js';
 
 // Promotes a wan2gp catalog entry (lib/localModels.js shape) into the
 // `inputs`-shaped descriptor the Video Studio dropdowns/controls expect.
@@ -299,7 +300,8 @@ export function VideoStudio() {
         if (!file) return;
 
         const apiKey = localStorage.getItem('muapi_key');
-        if (!apiKey) {
+        const internalKey = getInternalApiKey();
+        if (!apiKey && !internalKey) {
             AuthModal(() => videoFileInput.click());
             return;
         }
@@ -996,7 +998,8 @@ export function VideoStudio() {
         if (!pending.length) return;
 
         const apiKey = localStorage.getItem('muapi_key');
-        if (!apiKey) return; // can't poll without key; jobs remain for next time
+        const internalKey = getInternalApiKey();
+        if (!apiKey && !internalKey) return; // can't poll without credentials; jobs remain for next time
 
         const banner = document.createElement('div');
         banner.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[200] bg-[#111] border border-white/10 text-white text-sm px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3';
@@ -1005,6 +1008,7 @@ export function VideoStudio() {
 
         let remaining = pending.length;
         pending.forEach(async (job) => {
+            let alreadyRemoved = false;
             const elapsedAttempts = Math.floor((Date.now() - job.submittedAt) / job.interval);
             const attemptsLeft = Math.max(1, job.maxAttempts - elapsedAttempts);
             try {
@@ -1015,8 +1019,16 @@ export function VideoStudio() {
                 }
             } catch (e) {
                 console.warn('[VideoStudio] Pending job failed on resume:', job.requestId, e.message);
+                removePendingJob(job.requestId, {
+                    status: 'failed',
+                    errorMessage: e.message,
+                    eventType: 'job_resume_failed',
+                });
+                alreadyRemoved = true;
             } finally {
-                removePendingJob(job.requestId);
+                if (!alreadyRemoved) {
+                    removePendingJob(job.requestId);
+                }
                 remaining--;
                 if (remaining === 0) banner.remove();
                 else banner.querySelector('.banner-text').textContent = `Resuming ${remaining} pending generation${remaining > 1 ? 's' : ''}…`;
@@ -1120,7 +1132,8 @@ export function VideoStudio() {
         // Local Wan2GP generations don't go through Muapi — skip the auth gate.
         if (!isLocal) {
             const apiKey = localStorage.getItem('muapi_key');
-            if (!apiKey) {
+            const internalKey = getInternalApiKey();
+            if (!apiKey && !internalKey) {
                 AuthModal(() => generateBtn.click());
                 return;
             }
@@ -1291,7 +1304,13 @@ export function VideoStudio() {
             }
         } catch (e) {
             hadError = true;
-            if (capturedRequestId) removePendingJob(capturedRequestId);
+            if (capturedRequestId) {
+                removePendingJob(capturedRequestId, {
+                    status: 'failed',
+                    errorMessage: e.message,
+                    eventType: 'job_failed',
+                });
+            }
             console.error(e);
             // Restore hero so the page doesn't look broken after a failed generation
             hero.classList.remove('opacity-0', 'scale-95', '-translate-y-10', 'pointer-events-none');

@@ -861,7 +861,8 @@ export function VideoStudio() {
     resultVideo.controls = true;
     resultVideo.loop = true;
     resultVideo.autoplay = true;
-    resultVideo.muted = true;
+    resultVideo.muted = false;
+    resultVideo.volume = 1;
     resultVideo.playsInline = true;
     videoContainer.appendChild(resultVideo);
 
@@ -905,11 +906,17 @@ export function VideoStudio() {
         extendBtn.classList.toggle('hidden', !isSeedance2);
 
         resultVideo.src = videoUrl;
+        resultVideo.muted = false;
+        resultVideo.volume = 1;
         resultVideo.onloadeddata = () => {
             canvas.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-10', 'scale-95');
             canvas.classList.add('opacity-100', 'translate-y-0', 'scale-100');
             canvasControls.classList.remove('opacity-0');
             canvasControls.classList.add('opacity-100');
+            resultVideo.play().catch(() => {
+                resultVideo.muted = true;
+                resultVideo.play().catch(() => {});
+            });
         };
     };
 
@@ -929,13 +936,26 @@ export function VideoStudio() {
             thumb.className = `relative group/thumb cursor-pointer rounded-xl overflow-hidden border-2 transition-all duration-300 ${idx === 0 ? 'border-primary shadow-glow' : 'border-white/10 hover:border-white/30'}`;
 
             thumb.innerHTML = `
-                <video src="${entry.url}" preload="metadata" muted class="w-full aspect-square object-cover"></video>
+                <video src="${entry.url}" preload="metadata" class="w-full aspect-square object-cover"></video>
                 <div class="absolute inset-0 bg-black/60 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center gap-1">
                     <button class="hist-download p-1.5 bg-primary rounded-lg text-black hover:scale-110 transition-transform" title="Download">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
                     </button>
                 </div>
             `;
+
+            const thumbVideo = thumb.querySelector('video');
+            if (thumbVideo) {
+                thumbVideo.addEventListener('mouseenter', () => {
+                    thumbVideo.muted = false;
+                    thumbVideo.volume = 1;
+                    thumbVideo.play().catch(() => {});
+                });
+                thumbVideo.addEventListener('mouseleave', () => {
+                    thumbVideo.pause();
+                    thumbVideo.currentTime = 0;
+                });
+            }
 
             thumb.onclick = (e) => {
                 if (e.target.closest('.hist-download')) {

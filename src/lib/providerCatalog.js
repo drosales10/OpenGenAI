@@ -77,10 +77,10 @@ export const PROVIDER_DEFINITIONS = {
   },
   google: {
     id: 'google',
-    label: 'Google AI',
-    labelEs: 'Google AI',
-    description: 'Gemini, Imagen y Veo vía Google AI Studio.',
-    descriptionEs: 'Gemini, Imagen y Veo vía Google AI Studio.',
+    label: 'Google AI / Gemini 3.x',
+    labelEs: 'Google AI / Gemini 3.x',
+    description: 'Imagen vía gemini-3.1-flash-image y gemini-3-pro-image (Nano Banana 2/Pro).',
+    descriptionEs: 'Imagen vía gemini-3.1-flash-image y gemini-3-pro-image (Nano Banana 2/Pro).',
     docsUrl: 'https://aistudio.google.com/apikey',
     fields: [
       {
@@ -307,7 +307,7 @@ export const MODULE_CATEGORIES = [
         descriptionEs: 'Clave por defecto cuando no hay override por módulo',
         routeGroup: null,
         modelKinds: [],
-        providers: ['muapi'],
+        providers: ['muapi', 'google', 'openai', 'fal', 'replicate'],
         isGlobal: true,
       },
       {

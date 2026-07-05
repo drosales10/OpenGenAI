@@ -148,3 +148,18 @@ model ProviderCredential {
   @@index([moduleId], map: "provider_credentials_module_idx")
   @@map("provider_credentials")
 }
+
+model ModelCredential {
+  modelKey     String   @id @map("model_key")
+  providerId   String   @map("provider_id")
+  moduleId     String   @map("module_id")
+  credentials  Json     @default("{}")
+  routingMode  String   @default("auto") @map("routing_mode")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@index([moduleId], map: "model_credentials_module_idx")
+  @@index([providerId], map: "model_credentials_provider_idx")
+  @@map("model_credentials")
+}

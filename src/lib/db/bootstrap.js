@@ -93,6 +93,18 @@ const SCHEMA_STATEMENTS = [
     UNIQUE(module_id, provider_id)
   )`,
   `CREATE INDEX IF NOT EXISTS provider_credentials_module_idx ON provider_credentials(module_id)`,
+  `CREATE TABLE IF NOT EXISTS model_credentials (
+    model_key TEXT PRIMARY KEY,
+    provider_id TEXT NOT NULL,
+    module_id TEXT NOT NULL,
+    credentials JSONB NOT NULL DEFAULT '{}'::jsonb,
+    routing_mode TEXT NOT NULL DEFAULT 'auto',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS model_credentials_module_idx ON model_credentials(module_id)`,
+  `CREATE INDEX IF NOT EXISTS model_credentials_provider_idx ON model_credentials(provider_id)`,
   `CREATE INDEX IF NOT EXISTS admin_audit_logs_created_idx ON admin_audit_logs(created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS admin_audit_logs_action_created_idx ON admin_audit_logs(action, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS provider_request_logs_provider_created_idx ON provider_request_logs(provider, created_at DESC)`,

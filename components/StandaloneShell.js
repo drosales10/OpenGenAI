@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ImageStudio, VideoStudio, ClippingStudio, VibeMotionStudio, LipSyncStudio, RecastStudio, CinemaStudio, AudioStudio, MarketingStudio, WorkflowStudio, AgentStudio, AppsStudio, getUserBalance } from 'studio';
-import { getInternalApiBase, getInternalApiKey, setInternalApiBase, setInternalApiKey } from '@/src/lib/internalApi';
+import { getInternalApiBase, getInternalApiKey, setInternalApiBase, setInternalApiKey } from '@/src/lib/internalApi.js';
+import { syncMuapiKeyToBackend } from '@/src/lib/syncMuapiKeyToBackend.js';
 
 const DesignAgentStudio = dynamic(() => import('studio').then(mod => mod.DesignAgentStudio), {
   ssr: false,
@@ -97,6 +98,7 @@ export default function StandaloneShell() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [providerKeysStatus, setProviderKeysStatus] = useState('');
+  const [muapiSyncStatus, setMuapiSyncStatus] = useState('');
 
   // Sync tab with URL if user navigates manually or via browser back/forward
   useEffect(() => {
@@ -171,6 +173,16 @@ export default function StandaloneShell() {
     setApiKey(key);
     fetchBalance(key);
     document.cookie = `muapi_key=${key}; path=/; max-age=31536000; SameSite=Lax`;
+
+    void syncMuapiKeyToBackend(key)
+      .then((result) => {
+        if (result.synced) {
+          setMuapiSyncStatus('Clave MuAPI sincronizada con PostgreSQL.');
+        }
+      })
+      .catch((err) => {
+        console.warn('MuAPI sync to PostgreSQL failed:', err.message);
+      });
   }, [fetchBalance]);
 
   const handleKeyChange = useCallback(() => {
@@ -452,6 +464,26 @@ export default function StandaloneShell() {
   }, [showSettings, settingsTab]);
 
   useEffect(() => {
+    if (!showSettings || settingsTab !== 'general') return;
+    if (!apiKey || !getInternalApiKey()) {
+      if (apiKey) {
+        setMuapiSyncStatus('Configura una clave interna en Usuarios Admin para sincronizar con PostgreSQL.');
+      }
+      return;
+    }
+
+    void syncMuapiKeyToBackend(apiKey)
+      .then((result) => {
+        if (result.synced) {
+          setMuapiSyncStatus('Clave MuAPI sincronizada con PostgreSQL.');
+        }
+      })
+      .catch((err) => {
+        setMuapiSyncStatus(`Error al sincronizar: ${err.message}`);
+      });
+  }, [showSettings, settingsTab, apiKey]);
+
+  useEffect(() => {
     if (!showSettings || settingsTab !== 'users') return;
     if (!internalApiKeyValue.trim()) return;
     void loadUsers();
@@ -648,6 +680,17 @@ export default function StandaloneShell() {
                     {apiKey.slice(0, 8)}••••••••••••••••
                   </div>
                 </div>
+                {muapiSyncStatus && (
+                  <div className={`text-xs px-3 py-2 rounded-md border ${
+                    muapiSyncStatus.includes('Error')
+                      ? 'text-red-300 bg-red-500/10 border-red-500/25'
+                      : muapiSyncStatus.includes('Configura')
+                        ? 'text-amber-200 bg-amber-500/10 border-amber-500/30'
+                        : 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25'
+                  }`}>
+                    {muapiSyncStatus}
+                  </div>
+                )}
               </div>
             )}
 

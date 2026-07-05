@@ -2,6 +2,7 @@ import { LocalModelManager } from './LocalModelManager.js';
 import { ProviderKeysPanel } from './ProviderKeysPanel.js';
 import { isLocalAIAvailable } from '../lib/localInferenceClient.js';
 import { getInternalApiBase, getInternalApiKey, setInternalApiBase, setInternalApiKey } from '../lib/internalApi.js';
+import { syncMuapiKeyToBackend } from '../lib/syncMuapiKeyToBackend.js';
 import { t } from '../lib/i18n.js';
 
 export function SettingsModal(onClose) {
@@ -703,13 +704,23 @@ export function SettingsModal(onClose) {
     };
 
     apiPanel.querySelector('#settings-cancel-btn').onclick = close;
-    apiPanel.querySelector('#settings-save-btn').onclick = () => {
+    apiPanel.querySelector('#settings-save-btn').onclick = async () => {
         const key = apiPanel.querySelector('#settings-api-key').value.trim();
-        if (key) {
-            localStorage.setItem('muapi_key', key);
-            close();
-        } else {
+        if (!key) {
             alert(t('settings.invalidKey'));
+            return;
+        }
+
+        localStorage.setItem('muapi_key', key);
+        try {
+            const result = await syncMuapiKeyToBackend(key);
+            if (!result.synced) {
+                console.info('MuAPI key saved locally; internal key not configured for PostgreSQL sync.');
+            }
+            close();
+        } catch (error) {
+            alert(`Clave guardada localmente, pero falló la sincronización con PostgreSQL: ${error.message}`);
+            close();
         }
     };
 

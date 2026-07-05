@@ -1194,12 +1194,17 @@ export default function VideoStudio({
                     onClick={() => setFullscreenUrl(entry.url)}
                     controls={false}
                     loop
-                    muted
                     playsInline
-                    onMouseOver={(e) => e.target.play()}
+                    onMouseOver={(e) => {
+                      const video = e.currentTarget;
+                      video.muted = false;
+                      video.volume = 1;
+                      video.play().catch(() => {});
+                    }}
                     onMouseOut={(e) => {
-                      e.target.pause();
-                      e.target.currentTime = 0;
+                      const video = e.currentTarget;
+                      video.pause();
+                      video.currentTime = 0;
                     }}
                   />
                   
@@ -1928,13 +1933,17 @@ export default function VideoStudio({
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
-          <video 
-            src={fullscreenUrl} 
-            controls 
-            autoPlay 
-            loop 
-            className="max-w-[95vw] max-h-[95vh] rounded-2xl shadow-2xl object-contain animate-scale-up" 
+          <video
+            src={fullscreenUrl}
+            controls
+            autoPlay
+            loop
+            className="max-w-[95vw] max-h-[95vh] rounded-2xl shadow-2xl object-contain animate-scale-up"
             onClick={(e) => e.stopPropagation()}
+            onLoadedData={(e) => {
+              e.currentTarget.muted = false;
+              e.currentTarget.volume = 1;
+            }}
           />
         </div>
       )}

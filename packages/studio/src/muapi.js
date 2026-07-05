@@ -8,6 +8,15 @@ const BASE_URL = (typeof window !== 'undefined' && window.location?.protocol?.st
     : 'https://api.muapi.ai';
 const PROXY_WF_BASE = '/api/workflow';
 
+function normalizeVeoPayload(modelId, payload) {
+    if (!modelId || !/veo/i.test(String(modelId))) return payload;
+    const resolution = String(payload.resolution || '').toLowerCase();
+    if (resolution === '1080p' || resolution === '4k') {
+        payload.duration = 8;
+    }
+    return payload;
+}
+
 function notifyAuthRequired(status, detail) {
     if (typeof window === 'undefined') return;
     if (status !== 401 && status !== 403) return;
@@ -40,18 +49,35 @@ async function pollForResult(requestId, key, maxAttempts = 900, interval = 2000)
 }
 
 async function submitAndPoll(endpoint, payload, key, onRequestId, maxAttempts = 60) {
-    const url = `${BASE_URL}/api/v1/${endpoint}`;
+    const useGenerateRouter = typeof window !== 'undefined' && window.location?.protocol?.startsWith('http');
+    const url = useGenerateRouter
+        ? `/api/generate/v1/${endpoint}`
+        : `${BASE_URL}/api/v1/${endpoint}`;
+
     const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+        headers: { 'Content-Type': 'application/json', ...(key ? { 'x-api-key': key } : {}) },
         body: JSON.stringify(payload)
     });
     if (!response.ok) {
-        const errText = await response.text();
+        let errText = await response.text();
+        try {
+            const errJson = JSON.parse(errText);
+            if (errJson.error) errText = errJson.error;
+        } catch { /* keep raw text */ }
         notifyAuthRequired(response.status, errText);
-        throw new Error(`API Request Failed: ${response.status} ${response.statusText} - ${errText.slice(0, 100)}`);
+        throw new Error(`API Request Failed: ${response.status} ${response.statusText} - ${String(errText).slice(0, 500)}`);
     }
     const submitData = await response.json();
+    if (submitData.ok === false) {
+        throw new Error(submitData.error || 'Generation failed');
+    }
+
+    const directUrl = submitData.url || submitData.outputs?.[0];
+    if (directUrl || submitData.status === 'completed' || submitData.routing === 'direct') {
+        return { ...submitData, url: directUrl };
+    }
+
     const requestId = submitData.request_id || submitData.id;
     if (!requestId) return submitData;
     if (onRequestId) onRequestId(requestId);
@@ -113,6 +139,7 @@ export async function generateVideo(apiKey, params) {
     if (params.quality) payload.quality = params.quality;
     if (params.mode) payload.mode = params.mode;
     if (params.image_url) payload.image_url = params.image_url;
+    normalizeVeoPayload(params.model, payload);
     return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 900);
 }
 
@@ -148,6 +175,7 @@ export async function generateI2V(apiKey, params) {
     if (modelInfo?.inputs?.name) {
         payload.name = params.name || modelInfo.inputs.name.default;
     }
+    normalizeVeoPayload(params.model, payload);
     return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 900);
 }
 

@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { syncMuapiKeyToBackend } from '../lib/syncMuapiKeyToBackend.js';
 
 export function AuthModal(onSuccess) {
     const overlay = document.createElement('div');
@@ -47,10 +48,15 @@ export function AuthModal(onSuccess) {
     const input = modal.querySelector('#muapi-key-input');
     const btn = modal.querySelector('#save-key-btn');
 
-    btn.onclick = () => {
+    btn.onclick = async () => {
         const key = input.value.trim();
         if (key) {
             localStorage.setItem('muapi_key', key);
+            try {
+                await syncMuapiKeyToBackend(key);
+            } catch (error) {
+                console.warn('MuAPI sync to PostgreSQL failed:', error.message);
+            }
             document.body.removeChild(overlay);
             if (onSuccess) onSuccess();
         } else {

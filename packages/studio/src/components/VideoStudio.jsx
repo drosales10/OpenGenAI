@@ -3,9 +3,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { generateVideo, generateI2V, processV2V, uploadFile } from "../muapi.js";
 import {
-  t2vModels,
-  i2vModels,
+  allT2vModels,
+  allI2vModels,
   v2vModels,
+  isLocalProviderModelId,
   getAspectRatiosForVideoModel,
   getDurationsForModel,
   getResolutionsForVideoModel,
@@ -16,7 +17,7 @@ import {
   getDefaultEffectForI2VModel,
   getModesForModel,
   getMaxImagesForI2VModel,
-} from "../models.js";
+} from "../studioModels.js";
 
 // ── tiny helpers ──────────────────────────────────────────────────────────────
 
@@ -107,7 +108,7 @@ function DropdownItem({ label, selected, onClick }) {
 function ModelDropdown({ imageMode, selectedModel, onSelect, onClose }) {
   const [search, setSearch] = useState("");
 
-  const generationModels = imageMode ? i2vModels : t2vModels;
+  const generationModels = imageMode ? allI2vModels : allT2vModels;
 
   const lf = search.toLowerCase();
   const filteredMain = generationModels.filter(
@@ -248,7 +249,7 @@ export default function VideoStudio({
   const [v2vMode, setV2vMode] = useState(false);
 
   // ── model / params ──
-  const defaultModel = t2vModels[0];
+  const defaultModel = allT2vModels[0];
   const [selectedModel, setSelectedModel] = useState(defaultModel.id);
   const [selectedModelName, setSelectedModelName] = useState(defaultModel.name);
   const [selectedAr, setSelectedAr] = useState(
@@ -325,7 +326,7 @@ export default function VideoStudio({
 
   const getCurrentModels = useCallback(() => {
     if (v2vMode) return v2vModels;
-    return imageMode ? i2vModels : t2vModels;
+    return imageMode ? allI2vModels : allT2vModels;
   }, [imageMode, v2vMode]);
 
   const getCurrentAspectRatios = useCallback(
@@ -377,7 +378,7 @@ export default function VideoStudio({
         return;
       }
 
-      const modelList = isImageMode ? i2vModels : t2vModels;
+      const modelList = isImageMode ? allI2vModels : allT2vModels;
       const model = modelList.find((m) => m.id === modelId);
 
       const ars = isImageMode
@@ -561,11 +562,11 @@ export default function VideoStudio({
 
       let targetModelId = selectedModel;
       if (!imageMode) {
-        const currentT2V = t2vModels.find((m) => m.id === selectedModel);
+        const currentT2V = allT2vModels.find((m) => m.id === selectedModel);
         const sibling = currentT2V?.family
-          ? i2vModels.find((m) => m.family === currentT2V.family)
+          ? allI2vModels.find((m) => m.family === currentT2V.family)
           : null;
-        const target = sibling || i2vModels[0];
+        const target = sibling || allI2vModels[0];
         targetModelId = target.id;
         setImageMode(true);
         setSelectedModel(target.id);
@@ -695,11 +696,11 @@ export default function VideoStudio({
 
         let targetModelId = selectedModel;
         if (!imageMode) {
-          const currentT2V = t2vModels.find((m) => m.id === selectedModel);
+          const currentT2V = allT2vModels.find((m) => m.id === selectedModel);
           const sibling = currentT2V?.family
-            ? i2vModels.find((m) => m.family === currentT2V.family)
+            ? allI2vModels.find((m) => m.family === currentT2V.family)
             : null;
-          const target = sibling || i2vModels[0];
+          const target = sibling || allI2vModels[0];
           targetModelId = target.id;
           setImageMode(true);
           setSelectedModel(target.id);
@@ -735,7 +736,7 @@ export default function VideoStudio({
     // Motion-control v2v: keep model and video; just drop the image
     if (isMotionControlSelection(selectedModel, v2vMode)) return;
     setImageMode(false);
-    const first = t2vModels[0];
+    const first = allT2vModels[0];
     setSelectedModel(first.id);
     setSelectedModelName(first.name);
     applyControlsForModel(first.id, false, false);
@@ -750,7 +751,7 @@ export default function VideoStudio({
       // Reset to text-to-video if empty list
       if (isMotionControlSelection(selectedModel, v2vMode)) return;
       setImageMode(false);
-      const first = t2vModels[0];
+      const first = allT2vModels[0];
       setSelectedModel(first.id);
       setSelectedModelName(first.name);
       applyControlsForModel(first.id, false, false);
@@ -834,7 +835,7 @@ export default function VideoStudio({
     setUploadedVideoUrl(null);
     setUploadedVideoName(null);
     setV2vMode(false);
-    const first = t2vModels[0];
+    const first = allT2vModels[0];
     setSelectedModel(first.id);
     setSelectedModelName(first.name);
     applyControlsForModel(first.id, false, false);
@@ -939,6 +940,8 @@ export default function VideoStudio({
     setGenerating(true);
     setGenerateError(null);
 
+    const effectiveKey = isLocalProviderModelId(selectedModel) ? '' : apiKey;
+
     let hadError = false;
 
     try {
@@ -957,7 +960,7 @@ export default function VideoStudio({
         if (currentModel?.hasPrompt && trimmedPrompt) {
           v2vParams.prompt = trimmedPrompt;
         }
-        res = await processV2V(apiKey, v2vParams);
+        res = await processV2V(effectiveKey, v2vParams);
         if (!res?.url) throw new Error("No video URL returned by API");
 
         const genId = res.id || Date.now().toString();
@@ -989,7 +992,7 @@ export default function VideoStudio({
         }
         if (trimmedPrompt) i2vParams.prompt = trimmedPrompt;
         i2vParams.aspect_ratio = selectedAr;
-        const i2vModel = i2vModels.find((m) => m.id === selectedModel);
+        const i2vModel = allI2vModels.find((m) => m.id === selectedModel);
         if (uploadedEndImageUrl && i2vModel?.lastImageField) {
           i2vParams.last_image = uploadedEndImageUrl;
         }
@@ -1001,7 +1004,7 @@ export default function VideoStudio({
         if (selectedMode) i2vParams.mode = selectedMode;
         if (showEffect && selectedEffect) i2vParams.name = selectedEffect;
 
-        res = await generateI2V(apiKey, i2vParams);
+        res = await generateI2V(effectiveKey, i2vParams);
         if (!res?.url) throw new Error("No video URL returned by API");
 
         const genId = res.id || Date.now().toString();
@@ -1048,7 +1051,7 @@ export default function VideoStudio({
         if (selectedQuality) params.quality = selectedQuality;
         if (selectedMode) params.mode = selectedMode;
 
-        res = await generateVideo(apiKey, params);
+        res = await generateVideo(effectiveKey, params);
         if (!res?.url) throw new Error("No video URL returned by API");
 
         const genId = res.id || Date.now().toString();
@@ -1126,7 +1129,7 @@ export default function VideoStudio({
     setUploadedVideoUrl(null);
     setUploadedVideoName(null);
     setV2vMode(false);
-    const first = t2vModels[0];
+    const first = allT2vModels[0];
     setSelectedModel(first.id);
     setSelectedModelName(first.name);
     applyControlsForModel(first.id, false, false);
@@ -1456,7 +1459,7 @@ export default function VideoStudio({
             )}
 
             {/* End-frame upload button (FLF i2v models only) */}
-            {imageMode && i2vModels.find((m) => m.id === selectedModel)?.lastImageField && (
+            {imageMode && allI2vModels.find((m) => m.id === selectedModel)?.lastImageField && (
               <div className="relative">
                 <input
                   ref={endImageFileInputRef}

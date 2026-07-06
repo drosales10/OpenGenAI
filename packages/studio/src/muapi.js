@@ -1,4 +1,12 @@
 import { getModelById, getVideoModelById, getI2IModelById, getI2VModelById, getV2VModelById, getRecastModelById, getLipSyncModelById, getAudioModelById } from './models.js';
+import { getStudioModelById, getLocalTtsModelById } from './studioModels.js';
+
+function resolveModelEndpoint(modelId, fallbackFn) {
+    const studio = getStudioModelById(modelId);
+    if (studio) return studio.endpoint || studio.id;
+    const m = fallbackFn?.(modelId);
+    return m?.endpoint || modelId;
+}
 
 // In an http(s) browser we route through the host app's proxy (Next.js routes
 // under /api/* re-issue the call server-side) so api.muapi.ai CORS is bypassed.
@@ -87,8 +95,8 @@ async function submitAndPoll(endpoint, payload, key, onRequestId, maxAttempts = 
 }
 
 export async function generateImage(apiKey, params) {
-    const modelInfo = getModelById(params.model);
-    const endpoint = modelInfo?.endpoint || params.model;
+    const modelInfo = getModelById(params.model) || getStudioModelById(params.model);
+    const endpoint = resolveModelEndpoint(params.model, getModelById);
     const payload = { prompt: params.prompt };
     if (params.aspect_ratio) payload.aspect_ratio = params.aspect_ratio;
     if (params.resolution) payload.resolution = params.resolution;
@@ -129,8 +137,8 @@ export async function generateI2I(apiKey, params) {
 }
 
 export async function generateVideo(apiKey, params) {
-    const modelInfo = getVideoModelById(params.model);
-    const endpoint = modelInfo?.endpoint || params.model;
+    const modelInfo = getVideoModelById(params.model) || getStudioModelById(params.model);
+    const endpoint = resolveModelEndpoint(params.model, getVideoModelById);
     const payload = {};
     if (params.prompt) payload.prompt = params.prompt;
     if (params.aspect_ratio) payload.aspect_ratio = params.aspect_ratio;
@@ -144,8 +152,8 @@ export async function generateVideo(apiKey, params) {
 }
 
 export async function generateI2V(apiKey, params) {
-    const modelInfo = getI2VModelById(params.model);
-    const endpoint = modelInfo?.endpoint || params.model;
+    const modelInfo = getI2VModelById(params.model) || getStudioModelById(params.model);
+    const endpoint = resolveModelEndpoint(params.model, getI2VModelById);
     const payload = {};
     if (params.prompt) payload.prompt = params.prompt;
     const imageField = modelInfo?.imageField || 'image_url';
@@ -235,10 +243,23 @@ export async function processLipSync(apiKey, params) {
     return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 900);
 }
 
+/** TTS local XTTS v2 (Lip Sync Studio) */
+export async function generateLocalTts(apiKey, params) {
+    const modelId = params._modelId || params.model || 'local-xtts-v2';
+    const endpoint = resolveModelEndpoint(modelId, getLocalTtsModelById);
+    const payload = {
+        text: params.text || params.prompt || '',
+        language: params.language || 'es',
+    };
+    if (params.speaker_wav_base64) payload.speaker_wav_base64 = params.speaker_wav_base64;
+    if (params.speaker_wav_url) payload.speaker_wav_url = params.speaker_wav_url;
+    return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 120);
+}
+
 export async function generateAudio(apiKey, params) {
     const modelId = params._modelId || params.model;
-    const modelInfo = getAudioModelById(modelId);
-    const endpoint = modelInfo?.endpoint || modelId;
+    const modelInfo = getAudioModelById(modelId) || getStudioModelById(modelId);
+    const endpoint = resolveModelEndpoint(modelId, getAudioModelById);
     const payload = {};
     const skipKeys = ['_modelId', 'onRequestId'];
     for (const key in params) {

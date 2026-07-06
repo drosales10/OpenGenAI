@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { generateImage, generateI2I, uploadFile } from "../muapi.js";
 import {
-  t2iModels,
-  i2iModels,
+  allT2iModels,
+  allI2iModels,
+  isLocalProviderModelId,
   getAspectRatiosForModel,
   getResolutionsForModel,
   getQualityFieldForModel,
@@ -15,7 +16,7 @@ import {
   getEffectsForI2IModel,
   getDefaultEffectForI2IModel,
   getI2IModelById,
-} from "../models.js";
+} from "../studioModels.js";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -748,13 +749,13 @@ export default function ImageStudio({
 
   // ── Model / mode state ──────────────────────────────────────────────────
   const [imageMode, setImageMode] = useState(false); // false=t2i, true=i2i
-  const [selectedModelId, setSelectedModelId] = useState(t2iModels[0].id);
-  const [selectedModelName, setSelectedModelName] = useState(t2iModels[0].name);
+  const [selectedModelId, setSelectedModelId] = useState(allT2iModels[0].id);
+  const [selectedModelName, setSelectedModelName] = useState(allT2iModels[0].name);
   const [selectedAr, setSelectedAr] = useState(
-    t2iModels[0].inputs?.aspect_ratio?.default || "1:1",
+    allT2iModels[0].inputs?.aspect_ratio?.default || "1:1",
   );
   const [selectedQuality, setSelectedQuality] = useState(() => {
-    const resolutions = getResolutionsForModel(t2iModels[0].id);
+    const resolutions = getResolutionsForModel(allT2iModels[0].id);
     return resolutions[0] || null;
   });
   const [selectedEffect, setSelectedEffect] = useState("");
@@ -914,7 +915,7 @@ export default function ImageStudio({
   }, [droppedFiles, onFilesHandled, processDroppedImages]);
 
   // ── Derived: current model lists & helpers ───────────────────────────────
-  const currentModels = imageMode ? i2iModels : t2iModels;
+  const currentModels = imageMode ? allI2iModels : allT2iModels;
   const currentAspectRatios = imageMode
     ? getAspectRatiosForI2IModel(selectedModelId)
     : getAspectRatiosForModel(selectedModelId);
@@ -944,7 +945,7 @@ export default function ImageStudio({
       setUploadedImageUrls(newUrls);
 
       if (!imageMode) {
-        const firstI2I = i2iModels[0];
+        const firstI2I = allI2iModels[0];
         const ars = getAspectRatiosForI2IModel(firstI2I.id);
         const resolutions = getResolutionsForI2IModel(firstI2I.id);
         const effects = getEffectsForI2IModel(firstI2I.id);
@@ -963,7 +964,7 @@ export default function ImageStudio({
   const handleUploadClear = useCallback(() => {
     setUploadedImageUrls([]);
     setImageMode(false);
-    const firstT2I = t2iModels[0];
+    const firstT2I = allT2iModels[0];
     const ars = getAspectRatiosForModel(firstT2I.id);
     const resolutions = getResolutionsForModel(firstT2I.id);
     setSelectedModelId(firstT2I.id);
@@ -1015,7 +1016,7 @@ export default function ImageStudio({
     setPrompt("");
     setUploadedImageUrls([]);
     setImageMode(false);
-    const firstT2I = t2iModels[0];
+    const firstT2I = allT2iModels[0];
     const ars = getAspectRatiosForModel(firstT2I.id);
     const resolutions = getResolutionsForModel(firstT2I.id);
     setSelectedModelId(firstT2I.id);
@@ -1050,6 +1051,8 @@ export default function ImageStudio({
     setGenerating(true);
     setGenerateError(null);
 
+    const effectiveKey = isLocalProviderModelId(selectedModelId) ? '' : apiKey;
+
     try {
       const results = await Promise.all(
         Array.from({ length: batchSize }).map(async () => {
@@ -1066,7 +1069,7 @@ export default function ImageStudio({
               genParams[currentQualityField] = selectedQuality;
             }
             if (showEffectBtn && selectedEffect) genParams.name = selectedEffect;
-            return await generateI2I(apiKey, genParams);
+            return await generateI2I(effectiveKey, genParams);
           } else {
             const genParams = {
               model: selectedModelId,
@@ -1076,7 +1079,7 @@ export default function ImageStudio({
             if (currentQualityField && selectedQuality) {
               genParams[currentQualityField] = selectedQuality;
             }
-            return await generateImage(apiKey, genParams);
+            return await generateImage(effectiveKey, genParams);
           }
         })
       );

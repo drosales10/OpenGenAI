@@ -12,6 +12,14 @@ function maskSecret(value) {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
+function isProviderConfigured(providerId, credentials = {}) {
+  if (providerId === 'local') return true;
+  if (['ollama', 'wan2gp', 'local_audio', 'comfyui'].includes(providerId)) {
+    return Boolean(credentials.base_url);
+  }
+  return Boolean(credentials.api_key);
+}
+
 function normalizeCredentials(raw) {
   if (!raw || typeof raw !== 'object') return {};
   const out = {};
@@ -34,7 +42,7 @@ export async function listProviderCredentials() {
       id: Number(row.id),
       module_id: row.module_id,
       provider_id: row.provider_id,
-      configured: Boolean(row.credentials?.api_key),
+      configured: isProviderConfigured(row.provider_id, row.credentials || {}),
       credentials_preview: Object.fromEntries(
         Object.entries(row.credentials || {}).map(([k, v]) => [
           k,
@@ -106,7 +114,7 @@ export async function upsertProviderCredentials({ moduleId, providerId, credenti
     id: Number(row.id),
     module_id: row.module_id,
     provider_id: row.provider_id,
-    configured: Boolean(row.credentials?.api_key),
+    configured: isProviderConfigured(row.provider_id, row.credentials || {}),
     credentials_preview: Object.fromEntries(
       Object.entries(row.credentials || {}).map(([k, v]) => [
         k,
@@ -175,7 +183,7 @@ export async function getModuleCredentialsStatus(moduleId) {
       const creds = stored?.credentials || {};
       return {
         provider_id: providerId,
-        configured: Boolean(creds.api_key) || providerId === 'local',
+        configured: isProviderConfigured(providerId, creds),
         is_active: stored?.is_active ?? true,
         credentials_preview: Object.fromEntries(
           Object.entries(creds).map(([k, v]) => [

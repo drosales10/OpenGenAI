@@ -49,9 +49,12 @@ export async function POST(request, { params }) {
       || message.includes('Imagen')
       || message.includes('Interactions')
       || message.includes('Veo')
+      || message.includes('OpenAI')
+      || message.includes('Sora')
       || message.includes('bloqueó')
       || message.includes('Se requiere un prompt')
       || message.includes('Se requiere un prompt o imagen')
+      || message.includes('Configura tu clave de OpenAI')
     ) {
       status = 400;
     }

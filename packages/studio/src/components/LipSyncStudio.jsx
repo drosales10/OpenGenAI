@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { processLipSync, uploadFile } from "../muapi.js";
+import { processLipSync, uploadFile, generateLocalTts } from "../muapi.js";
 import {
   lipsyncModels,
   imageLipSyncModels,
@@ -9,6 +9,25 @@ import {
   getLipSyncModelById,
   getResolutionsForLipSyncModel,
 } from "../models.js";
+import { XTTS_LANGUAGES } from "../studioModels.js";
+
+const LOCAL_XTTS_MODEL = "local-xtts-v2";
+
+async function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function resolveAudioUrlForLipsync(url, apiKey) {
+  if (!url || !url.startsWith("data:")) return url;
+  const blob = await fetch(url).then((r) => r.blob());
+  const file = new File([blob], "xtts-voice.wav", { type: blob.type || "audio/wav" });
+  return uploadFile(apiKey, file);
+}
 
 // ---------------------------------------------------------------------------
 // Upload button states
@@ -349,6 +368,15 @@ export default function LipSyncStudio({
   const [audioName, setAudioName] = useState("");
   const [audioUrl, setAudioUrl] = useState(null);
 
+  // ── XTTS TTS ────────────────────────────────────────────────────────────
+  const [audioSource, setAudioSource] = useState("upload"); // upload | xtts
+  const [ttsText, setTtsText] = useState("");
+  const [ttsLanguage, setTtsLanguage] = useState("es");
+  const [refVoiceName, setRefVoiceName] = useState("");
+  const [refVoiceBase64, setRefVoiceBase64] = useState(null);
+  const [isGeneratingTts, setIsGeneratingTts] = useState(false);
+  const refVoiceInputRef = useRef(null);
+
   // ── Individual progress states ──
   const [imageProgress, setImageProgress] = useState(0);
   const [videoProgress, setVideoProgress] = useState(0);
@@ -404,6 +432,9 @@ export default function LipSyncStudio({
         if (data.videoName) setVideoName(data.videoName);
         if (data.audioName) setAudioName(data.audioName);
         if (data.prompt) setPrompt(data.prompt);
+        if (data.audioSource) setAudioSource(data.audioSource);
+        if (data.ttsText) setTtsText(data.ttsText);
+        if (data.ttsLanguage) setTtsLanguage(data.ttsLanguage);
         if (data.internalHistory) setInternalHistory(data.internalHistory);
       }
     } catch (err) {
@@ -428,6 +459,9 @@ export default function LipSyncStudio({
           audioUrl,
           audioName,
           prompt,
+          audioSource,
+          ttsText,
+          ttsLanguage,
           internalHistory,
         };
         localStorage.setItem(PERSIST_KEY, JSON.stringify(state));
@@ -447,6 +481,9 @@ export default function LipSyncStudio({
     audioUrl,
     audioName,
     prompt,
+    audioSource,
+    ttsText,
+    ttsLanguage,
     internalHistory,
   ]);
 
@@ -623,10 +660,48 @@ export default function LipSyncStudio({
     }
   };
 
+  const handleGenerateTts = useCallback(async () => {
+    const text = ttsText.trim();
+    if (!text) {
+      alert("Escribe el guion para sintetizar la voz.");
+      return;
+    }
+    setIsGeneratingTts(true);
+    try {
+      const res = await generateLocalTts("", {
+        _modelId: LOCAL_XTTS_MODEL,
+        text,
+        language: ttsLanguage,
+        speaker_wav_base64: refVoiceBase64 || undefined,
+      });
+      if (!res?.url) throw new Error("XTTS no devolvió audio.");
+      setAudioUrl(res.url);
+      setAudioName("xtts-voice.wav");
+      setAudioState(UPLOAD_STATE.READY);
+    } catch (err) {
+      alert(`Error XTTS: ${err.message}`);
+    } finally {
+      setIsGeneratingTts(false);
+    }
+  }, [ttsText, ttsLanguage, refVoiceBase64]);
+
+  const handleRefVoicePick = useCallback(async (file) => {
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) {
+      alert("La voz de referencia no puede superar 15 MB.");
+      return;
+    }
+    const dataUrl = await fileToBase64(file);
+    setRefVoiceBase64(dataUrl);
+    setRefVoiceName(file.name);
+  }, []);
+
   // ── Generation ──────────────────────────────────────────────────────────
   const handleGenerate = async () => {
     if (!audioUrl) {
-      alert("Please upload an audio file first.");
+      alert(audioSource === "xtts"
+        ? "Genera la voz con XTTS primero."
+        : "Please upload an audio file first.");
       return;
     }
     if (inputMode === "image" && !imageUrl) {
@@ -642,9 +717,10 @@ export default function LipSyncStudio({
     setGenerateError(null);
 
     try {
+      const resolvedAudioUrl = await resolveAudioUrlForLipsync(audioUrl, apiKey);
       const lipsyncParams = {
         model: selectedModelId,
-        audio_url: audioUrl,
+        audio_url: resolvedAudioUrl,
       };
       if (inputMode === "image") lipsyncParams.image_url = imageUrl;
       else lipsyncParams.video_url = videoUrl;
@@ -702,6 +778,11 @@ export default function LipSyncStudio({
     setAudioUrl(null);
     setAudioState(UPLOAD_STATE.IDLE);
     setAudioName("");
+    setAudioSource("upload");
+    setTtsText("");
+    setTtsLanguage("es");
+    setRefVoiceBase64(null);
+    setRefVoiceName("");
   };
 
   // ── Media status labels ─────────────────────────────────────────────────
@@ -863,6 +944,109 @@ export default function LipSyncStudio({
             </button>
           </div>
 
+          {/* Audio source: upload vs XTTS */}
+          <div className="flex flex-wrap items-center gap-2 px-3">
+            <span className="text-[10px] font-bold text-white/30 uppercase tracking-wider">Audio</span>
+            <button
+              type="button"
+              onClick={() => {
+                setAudioSource("upload");
+                setAudioUrl(null);
+                setAudioState(UPLOAD_STATE.IDLE);
+                setAudioName("");
+              }}
+              className={`px-3 py-1 rounded-md text-xs font-bold transition-all border ${
+                audioSource === "upload"
+                  ? "border-primary/60 bg-primary/5 text-primary"
+                  : "border-white/[0.03] bg-white/[0.03] text-white/40 hover:border-white/20 hover:text-white"
+              }`}
+            >
+              Subir audio
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAudioSource("xtts");
+                setAudioUrl(null);
+                setAudioState(UPLOAD_STATE.IDLE);
+                setAudioName("");
+              }}
+              className={`px-3 py-1 rounded-md text-xs font-bold transition-all border ${
+                audioSource === "xtts"
+                  ? "border-primary/60 bg-primary/5 text-primary"
+                  : "border-white/[0.03] bg-white/[0.03] text-white/40 hover:border-white/20 hover:text-white"
+              }`}
+            >
+              Generar con XTTS
+            </button>
+            {audioSource === "xtts" && audioState === UPLOAD_STATE.READY && (
+              <span className="text-[10px] text-emerald-400/80">✓ Voz generada</span>
+            )}
+          </div>
+
+          {audioSource === "xtts" && (
+            <div className="mx-3 rounded-md border border-white/[0.06] bg-white/[0.02] p-3 space-y-2">
+              <textarea
+                value={ttsText}
+                onChange={(e) => setTtsText(e.target.value)}
+                placeholder="Escribe el guion para sintetizar la voz…"
+                rows={2}
+                className="w-full bg-transparent border-none text-white text-sm placeholder:text-white/20 focus:outline-none resize-none leading-relaxed"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={ttsLanguage}
+                  onChange={(e) => setTtsLanguage(e.target.value)}
+                  className="h-8 rounded-md bg-white/[0.05] border border-white/10 px-2 text-xs text-white/80 outline-none focus:border-primary/40"
+                >
+                  {XTTS_LANGUAGES.map(({ id, label }) => (
+                    <option key={id} value={id} className="bg-[#111]">
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  ref={refVoiceInputRef}
+                  type="file"
+                  accept="audio/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void handleRefVoicePick(file);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => refVoiceInputRef.current?.click()}
+                  className="h-8 px-3 rounded-md bg-white/[0.05] border border-white/10 text-[11px] font-bold text-white/60 hover:text-white hover:border-primary/30 transition-all"
+                >
+                  {refVoiceName ? `Voz: ${refVoiceName}` : "Voz referencia (opcional)"}
+                </button>
+                {refVoiceName && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRefVoiceBase64(null);
+                      setRefVoiceName("");
+                    }}
+                    className="h-8 px-2 text-[10px] text-white/40 hover:text-white/70"
+                  >
+                    Quitar
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleGenerateTts()}
+                  disabled={isGeneratingTts || !ttsText.trim()}
+                  className="h-8 px-3 rounded-md bg-primary/90 text-black text-[11px] font-bold disabled:opacity-40 hover:bg-primary transition-all ml-auto"
+                >
+                  {isGeneratingTts ? "Generando…" : "Generar voz"}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Uploads row */}
           <div className="flex items-center gap-2 px-1">
             <div className="flex items-center gap-2">
@@ -924,7 +1108,8 @@ export default function LipSyncStudio({
                 />
               )}
 
-              {/* Audio picker — always visible */}
+              {/* Audio picker — upload mode only */}
+              {audioSource === "upload" && (
               <MediaPickerButton
                 accept="audio/*"
                 label="Audio"
@@ -944,6 +1129,7 @@ export default function LipSyncStudio({
                 isVideo={false}
                 apiKey={apiKey}
               />
+              )}
             </div>
 
             {/* Prompt textarea */}

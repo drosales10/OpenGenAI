@@ -8,20 +8,37 @@ import {
   recastModels,
   audioModels,
 } from '../../packages/studio/src/models.js';
+import { ollamaT2iModels } from '../../packages/studio/src/ollamaModels.js';
+import { localAudioModels } from '../../packages/studio/src/localAudioModels.js';
+import { localTtsModels } from '../../packages/studio/src/localTtsModels.js';
+import {
+  wan2gpT2iModels,
+  wan2gpT2vModels,
+  wan2gpI2vModels,
+} from '../../packages/studio/src/wan2gpModels.js';
+import {
+  comfyuiT2iModels,
+  comfyuiI2iModels,
+  comfyuiT2vModels,
+  comfyuiAudioModels,
+} from '../../packages/studio/src/comfyuiModels.js';
 import { inferProviderForModel, getProviderMeta } from '@/src/lib/modelProviders';
 
 const MODULE_MODEL_MAP = {
   image_studio: [
-    { kind: 't2i', models: t2iModels },
-    { kind: 'i2i', models: i2iModels },
+    { kind: 't2i', models: [...t2iModels, ...ollamaT2iModels, ...wan2gpT2iModels, ...comfyuiT2iModels] },
+    { kind: 'i2i', models: [...i2iModels, ...comfyuiI2iModels] },
   ],
   video_studio: [
-    { kind: 't2v', models: t2vModels },
-    { kind: 'i2v', models: i2vModels },
+    { kind: 't2v', models: [...t2vModels, ...wan2gpT2vModels, ...comfyuiT2vModels] },
+    { kind: 'i2v', models: [...i2vModels, ...wan2gpI2vModels] },
     { kind: 'v2v', models: v2vModels },
   ],
-  audio_studio: [{ kind: 'audio', models: audioModels }],
-  lipsync_studio: [{ kind: 'lipsync', models: lipsyncModels }],
+  audio_studio: [{ kind: 'audio', models: [...audioModels, ...localAudioModels, ...comfyuiAudioModels] }],
+  lipsync_studio: [
+    { kind: 'lipsync', models: lipsyncModels },
+    { kind: 'tts', models: localTtsModels },
+  ],
   recast_studio: [{ kind: 'recast', models: recastModels }],
   cinema_studio: [
     {
@@ -67,8 +84,14 @@ function registerModel(model, moduleId, kind) {
     endpoint: model.endpoint || model.id,
     kind,
     moduleId,
-    provider: inferProviderForModel(model),
+    provider: model.provider || inferProviderForModel(model),
     family: model.family || null,
+    ollamaModel: model.ollamaModel || null,
+    wan2gpId: model.wan2gpId || null,
+    engine: model.engine || null,
+    localAudioModel: model.localAudioModel || null,
+    modelKind: model.modelKind || null,
+    comfyuiWorkflow: model.workflow || model.comfyuiWorkflow || null,
   };
 
   ENDPOINT_INDEX.set(entry.endpoint, entry);

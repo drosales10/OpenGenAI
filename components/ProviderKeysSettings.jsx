@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getInternalApiBase, getInternalApiKey } from '@/src/lib/internalApi';
+import OllamaSettings from './OllamaSettings';
+import Wan2gpSettings from './Wan2gpSettings';
+import LocalAudioSettings from './LocalAudioSettings';
+import ComfyUISettings from './ComfyUISettings';
 
 function StatusBadge({ configured, supportsDirect, routing }) {
   if (routing === 'direct') {
@@ -27,12 +31,13 @@ function StatusBadge({ configured, supportsDirect, routing }) {
 }
 
 function ModelKeyRow({ model, stored, onSave, onDelete, disabled }) {
+  const isHostProvider = ['ollama', 'wan2gp', 'local_audio'].includes(model.provider_id);
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
   const handleSave = async () => {
-    if (!apiKey.trim() && !stored?.configured) {
+    if (!isHostProvider && !apiKey.trim() && !stored?.configured) {
       setMsg('Ingresa tu clave API.');
       return;
     }
@@ -66,6 +71,12 @@ function ModelKeyRow({ model, stored, onSave, onDelete, disabled }) {
         )}
       </div>
       <div className="lg:col-span-4">
+        {isHostProvider ? (
+          <div className="text-[10px] text-emerald-300/80 leading-relaxed">
+            Sin clave API. Configura el host arriba ({model.provider_label}).
+          </div>
+        ) : (
+          <>
         {stored?.credentials_preview?.api_key && (
           <div className="text-[10px] font-mono text-white/45 mb-1">{stored.credentials_preview.api_key}</div>
         )}
@@ -87,28 +98,38 @@ function ModelKeyRow({ model, stored, onSave, onDelete, disabled }) {
             Obtener clave
           </a>
         )}
+          </>
+        )}
       </div>
       <div className="lg:col-span-2 flex gap-1.5 items-center">
-        <StatusBadge
-          configured={Boolean(stored?.configured)}
-          supportsDirect={model.supports_direct}
-          routing={stored?.configured && model.supports_direct ? 'direct' : null}
-        />
-        <button
-          onClick={() => void handleSave()}
-          disabled={disabled || saving}
-          className="h-7 px-2 rounded bg-cyan-400 text-black text-[10px] font-bold hover:brightness-110 disabled:opacity-40"
-        >
-          {saving ? '…' : 'Guardar'}
-        </button>
-        {stored?.configured && (
-          <button
-            onClick={() => void onDelete(model.model_key)}
-            disabled={disabled || saving}
-            className="h-7 px-2 rounded bg-red-500/10 border border-red-400/25 text-red-300 text-[10px] font-bold disabled:opacity-40"
-          >
-            ✕
-          </button>
+        {isHostProvider ? (
+          <span className="inline-flex px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+            Local
+          </span>
+        ) : (
+          <>
+            <StatusBadge
+              configured={Boolean(stored?.configured)}
+              supportsDirect={model.supports_direct}
+              routing={stored?.configured && model.supports_direct ? 'direct' : null}
+            />
+            <button
+              onClick={() => void handleSave()}
+              disabled={disabled || saving}
+              className="h-7 px-2 rounded bg-cyan-400 text-black text-[10px] font-bold hover:brightness-110 disabled:opacity-40"
+            >
+              {saving ? '…' : 'Guardar'}
+            </button>
+            {stored?.configured && (
+              <button
+                onClick={() => void onDelete(model.model_key)}
+                disabled={disabled || saving}
+                className="h-7 px-2 rounded bg-red-500/10 border border-red-400/25 text-red-300 text-[10px] font-bold disabled:opacity-40"
+              >
+                ✕
+              </button>
+            )}
+          </>
         )}
       </div>
       {msg && <div className="lg:col-span-12 text-[10px] text-white/50">{msg}</div>}
@@ -239,9 +260,15 @@ export default function ProviderKeysSettings({
       )}
 
       <div className="text-xs text-white/45 bg-white/[0.03] border border-white/10 rounded-md px-3 py-2.5 leading-relaxed">
-        Configura tu clave de Google AI Studio. Imagen: <span className="text-cyan-300">gemini-3.1-flash-image</span> y <span className="text-cyan-300">gemini-3-pro-image</span>.
-        Video Veo: <span className="text-cyan-300">veo-3.1-generate-preview</span> (con audio). También puedes usar <span className="text-cyan-300">GOOGLE_API_KEY</span> en el .env del servidor.
+        Configura tus claves de proveedor. Google: <span className="text-cyan-300">Gemini/Veo</span>.
+        OpenAI: <span className="text-cyan-300">gpt-image-1.5</span>, <span className="text-cyan-300">gpt-image-2</span>, <span className="text-cyan-300">Sora 2</span>.
+        También puedes usar <span className="text-cyan-300">GOOGLE_API_KEY</span> o <span className="text-cyan-300">OPENAI_API_KEY</span> en el .env del servidor.
       </div>
+
+      <OllamaSettings internalApiBase={base} internalApiKey={key} />
+      <Wan2gpSettings internalApiBase={base} internalApiKey={key} />
+      <LocalAudioSettings internalApiBase={base} internalApiKey={key} />
+      <ComfyUISettings internalApiBase={base} internalApiKey={key} />
 
       <div className="flex flex-wrap gap-3 items-center justify-between">
         <div className="text-xs text-white/50">

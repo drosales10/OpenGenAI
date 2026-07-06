@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { generateAudio, uploadFile } from "../muapi.js";
-import { audioModels, getAudioModelById } from "../models.js";
+import { allAudioModels, isLocalProviderModelId } from "../studioModels.js";
+import { getAudioModelById } from "../models.js";
 
 // ---------------------------------------------------------------------------
 // Upload button states
@@ -482,7 +483,7 @@ export default function AudioStudio({
   const PERSIST_KEY = "hg_audio_studio_persistent";
 
   // ── Mode & model state ──────────────────────────────────────────────────
-  const [selectedModelId, setSelectedModelId] = useState(audioModels[0]?.id ?? "");
+  const [selectedModelId, setSelectedModelId] = useState(allAudioModels[0]?.id ?? "");
   const [params, setParams] = useState({});
   const [openDropdown, setOpenDropdown] = useState(false);
   const modelBtnRef = useRef(null);
@@ -499,7 +500,8 @@ export default function AudioStudio({
   const history = historyItems ?? internalHistory;
   const [activeHistoryIdx, setActiveHistoryIdx] = useState(0);
 
-  const selectedModel = getAudioModelById(selectedModelId);
+  const selectedModel = getAudioModelById(selectedModelId)
+    || allAudioModels.find((m) => m.id === selectedModelId);
 
   // ── Initialize params when model changes ──────────────────────────────
   useEffect(() => {
@@ -627,7 +629,10 @@ export default function AudioStudio({
       };
 
       // Call generateAudio
-      const res = await generateAudio(apiKey, audioParams);
+      const res = await generateAudio(
+        isLocalProviderModelId(selectedModelId) ? '' : apiKey,
+        audioParams
+      );
 
       if (!res?.url) {
         throw new Error("No audio URL returned by the API.");
@@ -699,7 +704,7 @@ export default function AudioStudio({
 
             {openDropdown && (
               <div className="absolute left-0 right-0 mt-2 z-50 bg-[#161618] border border-zinc-700 rounded shadow-3xl max-h-60 overflow-y-auto custom-scrollbar p-1.5">
-                {audioModels.map((model) => (
+                {allAudioModels.map((model) => (
                   <button
                     key={model.id}
                     type="button"

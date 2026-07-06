@@ -1,8 +1,7 @@
 import { muapi } from '../lib/muapi.js';
-import {
-    t2iModels, getAspectRatiosForModel, getResolutionsForModel, getQualityFieldForModel,
+import { allT2iModels, getAspectRatiosForModel, getResolutionsForModel, getQualityFieldForModel,
     i2iModels, getAspectRatiosForI2IModel, getResolutionsForI2IModel, getQualityFieldForI2IModel,
-    getMaxImagesForI2IModel
+    getMaxImagesForI2IModel, isOllamaModelId
 } from '../lib/models.js';
 import { localAI, isLocalAIAvailable } from '../lib/localInferenceClient.js';
 import { LOCAL_MODEL_CATALOG, getLocalModelById } from '../lib/localModels.js';
@@ -29,7 +28,7 @@ export function ImageStudio() {
     container.className = 'w-full h-full flex flex-col items-center justify-center bg-app-bg relative p-4 md:p-6 overflow-y-auto custom-scrollbar overflow-x-hidden';
 
     // --- State ---
-    const defaultModel = t2iModels[0];
+    const defaultModel = allT2iModels[0];
     let selectedModel = defaultModel.id;
     let selectedModelName = defaultModel.name;
     let selectedAr = defaultModel.inputs?.aspect_ratio?.default || '1:1';
@@ -64,7 +63,7 @@ export function ImageStudio() {
     // Quick tools panel state
     let showToolsPanel = false;
 
-    const getCurrentModels = () => imageMode ? i2iModels : t2iModels;
+    const getCurrentModels = () => imageMode ? i2iModels : allT2iModels;
     const getCurrentAspectRatios = (id) => imageMode ? getAspectRatiosForI2IModel(id) : getAspectRatiosForModel(id);
     const getCurrentResolutions = (id) => imageMode ? getResolutionsForI2IModel(id) : getResolutionsForModel(id);
     const getCurrentQualityField = (id) => imageMode ? getQualityFieldForI2IModel(id) : getQualityFieldForModel(id);
@@ -115,7 +114,7 @@ export function ImageStudio() {
     const picker = createUploadPicker({
         anchorContainer: container,
         uploadFn: (file) => useLocalModel ? URL.createObjectURL(file) : muapi.uploadFile(file),
-        requireApiKey: () => !useLocalModel,
+        requireApiKey: () => !useLocalModel && !isOllamaModelId(selectedModel),
         onSelect: ({ url, urls }) => {
             uploadedImageUrls = urls || [url];
             if (!imageMode) {
@@ -137,8 +136,8 @@ export function ImageStudio() {
         onClear: () => {
             uploadedImageUrls = [];
             imageMode = false;
-            selectedModel = t2iModels[0].id;
-            selectedModelName = t2iModels[0].name;
+            selectedModel = allT2iModels[0].id;
+            selectedModelName = allT2iModels[0].name;
             selectedAr = getAspectRatiosForModel(selectedModel)[0];
             document.getElementById('model-btn-label').textContent = selectedModelName;
             document.getElementById('ar-btn-label').textContent = selectedAr;
@@ -1150,8 +1149,8 @@ export function ImageStudio() {
         picker.setMaxImages(1);
         // Reset to t2i mode
         imageMode = false;
-        selectedModel = t2iModels[0].id;
-        selectedModelName = t2iModels[0].name;
+        selectedModel = allT2iModels[0].id;
+        selectedModelName = allT2iModels[0].name;
         selectedAr = getAspectRatiosForModel(selectedModel)[0];
         document.getElementById('model-btn-label').textContent = selectedModelName;
         document.getElementById('ar-btn-label').textContent = selectedAr;

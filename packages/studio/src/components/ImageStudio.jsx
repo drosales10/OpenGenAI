@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { generateImage, generateI2I, uploadFile } from "../muapi.js";
+import { generateImage, generateI2I, uploadMediaForModel } from "../muapi.js";
 import {
   allT2iModels,
   allI2iModels,
@@ -139,11 +139,14 @@ function UploadButton({ apiKey, maxImages, onSelect, onClear, initialUrls = [], 
           setUploadHistory((prev) => [placeholder, ...prev]);
 
           try {
-            const uploadedUrl = await uploadFile(apiKey, file, (pct) => {
-              setLastUploadProgress(pct);
-              setUploadHistory((prev) =>
-                prev.map((h) => (h.id === id ? { ...h, progress: pct } : h)),
-              );
+            const uploadedUrl = await uploadMediaForModel(apiKey, file, {
+              modelId: selectedModelId,
+              onProgress: (pct) => {
+                setLastUploadProgress(pct);
+                setUploadHistory((prev) =>
+                  prev.map((h) => (h.id === id ? { ...h, progress: pct } : h)),
+                );
+              },
             });
 
             // Update history with real URL and Mark as 100%
@@ -883,7 +886,7 @@ export default function ImageStudio({
       const urls = await Promise.all(
         toUpload.map(async (file) => {
           try {
-            return await uploadFile(apiKey, file);
+            return await uploadMediaForModel(apiKey, file, { modelId: selectedModelId });
           } catch (err) {
             console.error(
               "[ImageStudio] Drop upload failed for",

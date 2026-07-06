@@ -1,6 +1,7 @@
 import { findModelContext } from '@/src/lib/modelRegistry';
 import {
   resolveCredentialsForModel,
+  resolveGoogleDirectCredentials,
   shouldUseDirectProvider,
 } from '@/src/lib/db/modelCredentials';
 import { generateGoogleImage, isGoogleImageModel } from '@/src/lib/providers/google';
@@ -24,6 +25,47 @@ import { generateComfyui, isComfyuiModel } from '@/src/lib/providers/comfyui';
 import { resolveComfyuiHostFromEnv } from '@/src/lib/providers/comfyuiShared';
 
 const MUAPI_BASE = 'https://api.muapi.ai';
+
+function payloadUsesStagingMedia(payload = {}) {
+  const isStaging = (value) => typeof value === 'string' && value.startsWith('staging://');
+  if (isStaging(payload.image_url) || isStaging(payload.start_image_url) || isStaging(payload.last_image)) {
+    return true;
+  }
+  if (Array.isArray(payload.images_list) && payload.images_list.some(isStaging)) {
+    return true;
+  }
+  return false;
+}
+
+async function tryRouteGoogleDirect(modelContext, payload, credentials, endpoint) {
+  const googleCreds = await resolveGoogleDirectCredentials(endpoint || modelContext.id);
+  const apiKey = googleCreds?.apiKey || (credentials?.provider === 'google' ? credentials.apiKey : null);
+  if (!apiKey) return null;
+
+  const source = googleCreds?.source || credentials?.source || 'google';
+
+  if (isGoogleVideoModel(modelContext)) {
+    const result = await generateGoogleVideo(modelContext, payload, apiKey);
+    return {
+      ...result,
+      routing: 'direct',
+      provider: 'google',
+      credential_source: source,
+    };
+  }
+
+  if (isGoogleImageModel(modelContext.id) || ['t2i', 'i2i'].includes(modelContext.kind)) {
+    const result = await generateGoogleImage(modelContext, payload, apiKey);
+    return {
+      ...result,
+      routing: 'direct',
+      provider: 'google',
+      credential_source: source,
+    };
+  }
+
+  return null;
+}
 
 async function pollMuapiResult(requestId, apiKey, maxAttempts = 120, interval = 2000) {
   const pollUrl = `${MUAPI_BASE}/api/v1/predictions/${requestId}/result`;
@@ -81,29 +123,11 @@ export async function routeGeneration(endpoint, payload, { legacyApiKey = null }
   const modelContext = findModelContext(endpoint);
   const credentials = await resolveCredentialsForModel(endpoint);
 
+  // Google (Veo/Gemini): ruta directa siempre que haya clave Google disponible.
+  const googleDirect = await tryRouteGoogleDirect(modelContext, payload, credentials, endpoint);
+  if (googleDirect) return googleDirect;
+
   const useDirect = credentials && (await shouldUseDirectProvider(endpoint, credentials));
-
-  if (useDirect && credentials.provider === 'google') {
-    if (isGoogleVideoModel(modelContext)) {
-      const result = await generateGoogleVideo(modelContext, payload, credentials.apiKey);
-      return {
-        ...result,
-        routing: 'direct',
-        provider: 'google',
-        credential_source: credentials.source,
-      };
-    }
-
-    if (isGoogleImageModel(modelContext.id) || ['t2i', 'i2i'].includes(modelContext.kind)) {
-      const result = await generateGoogleImage(modelContext, payload, credentials.apiKey);
-      return {
-        ...result,
-        routing: 'direct',
-        provider: 'google',
-        credential_source: credentials.source,
-      };
-    }
-  }
 
   if (useDirect && credentials.provider === 'openai') {
     if (isOpenAIVideoModel(modelContext)) {
@@ -256,10 +280,21 @@ export async function routeGeneration(endpoint, payload, { legacyApiKey = null }
     ? credentials.apiKey
     : (legacyApiKey || credentials?.apiKey);
 
-  if (modelContext.provider === 'google' && (!credentials || credentials.provider === 'muapi')) {
+  const isGoogleModel =
+    modelContext.provider === 'google'
+    || /veo|gemini|imagen|nano-banana/i.test(String(modelContext.id || modelContext.endpoint || ''));
+
+  if (isGoogleModel) {
     throw new Error(
       'Configura tu clave de Google AI Studio en Settings → Claves API (modelo Veo/Gemini), '
       + 'o añade GOOGLE_API_KEY en el archivo .env del servidor.'
+    );
+  }
+
+  if (payloadUsesStagingMedia(payload)) {
+    throw new Error(
+      'La imagen subida solo funciona con generación directa (Google, Ollama, ComfyUI local). '
+      + 'Este modelo está intentando usar MuAPI; configura la clave del proveedor correcto.'
     );
   }
 
@@ -399,16 +434,19 @@ export async function routeGeneration(endpoint, payload, { legacyApiKey = null }
 export async function getGenerationRoutingInfo(endpoint) {
   const modelContext = findModelContext(endpoint);
   const credentials = await resolveCredentialsForModel(endpoint);
+  const googleCreds = await resolveGoogleDirectCredentials(endpoint);
   const useDirect = credentials && (await shouldUseDirectProvider(endpoint, credentials));
+  const googleDirect = Boolean(googleCreds?.apiKey)
+    && (isGoogleVideoModel(modelContext) || isGoogleImageModel(modelContext.id));
 
   return {
     model_key: modelContext.id,
     model_name: modelContext.name,
     provider_id: modelContext.provider,
     module_id: modelContext.moduleId,
-    configured: Boolean(credentials?.apiKey),
-    routing: useDirect ? 'direct' : credentials ? 'muapi' : 'none',
-    credential_source: credentials?.source || null,
+    configured: Boolean(credentials?.apiKey || googleCreds?.apiKey || credentials?.baseUrl),
+    routing: googleDirect || useDirect ? 'direct' : credentials ? 'muapi' : 'none',
+    credential_source: googleCreds?.source || credentials?.source || null,
     supports_direct:
       (modelContext.provider === 'google'
         && (isGoogleImageModel(modelContext.id) || isGoogleVideoModel(modelContext)))

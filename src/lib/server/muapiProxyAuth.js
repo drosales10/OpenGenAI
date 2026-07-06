@@ -47,31 +47,27 @@ export async function resolveMuapiProxyAuth(request, legacyResolver, routeGroup 
 
   const internalCookie = request.cookies.get('internal_api_key')?.value;
   if (internalCookie) {
-    const user = await findUserByInternalApiKey(internalCookie);
-    if (!user) {
+    let cookieKey = internalCookie;
+    try {
+      cookieKey = decodeURIComponent(internalCookie);
+    } catch {
+      // use raw cookie value
+    }
+    const user = await findUserByInternalApiKey(cookieKey);
+    if (user) {
+      const provider = await resolveProviderApiKey(routeGroup);
+      if (!provider.ok) return provider;
+
       return {
-        ok: false,
-        response: NextResponse.json(
-          {
-            ok: false,
-            error: 'Invalid internal API key cookie',
-          },
-          { status: 403 }
-        ),
+        ok: true,
+        apiKey: provider.providerKey,
+        baseUrl: provider.baseUrl,
+        authMode: 'internal-cookie',
+        userId: user.user_id || null,
+        keySource: provider.source,
       };
     }
-
-    const provider = await resolveProviderApiKey(routeGroup);
-    if (!provider.ok) return provider;
-
-    return {
-      ok: true,
-      apiKey: provider.providerKey,
-      baseUrl: provider.baseUrl,
-      authMode: 'internal-cookie',
-      userId: user.user_id || null,
-      keySource: provider.source,
-    };
+    // Cookie obsoleta o inválida — continuar con x-api-key / muapi_key (modo legado)
   }
 
   const legacyKey = legacyResolver ? legacyResolver(request) : '';

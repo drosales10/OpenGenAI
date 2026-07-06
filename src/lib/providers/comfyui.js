@@ -2,7 +2,7 @@
  * Adaptador ComfyUI — imagen, video y audio vía API /prompt.
  */
 
-import { getComfyuiModelById } from '../../packages/studio/src/comfyuiModels.js';
+import { getComfyuiModelById } from '@/src/lib/comfyuiCatalog';
 import { buildWorkflowForModel } from '@/src/lib/providers/comfyuiWorkflows';
 import {
   extractComfyuiOutputs,

@@ -144,6 +144,57 @@ export async function deleteModelCredentials(modelKey) {
  * Resuelve credenciales para un modelo concreto.
  * Orden: model_credentials → provider module → provider _global → muapi global
  */
+export async function resolveGoogleDirectCredentials(endpointOrId) {
+  const model = findModelContext(endpointOrId);
+  const isGoogle =
+    model.provider === 'google'
+    || /veo|gemini|imagen|nano-banana/i.test(String(model.id || model.endpoint || ''));
+
+  if (!isGoogle) return null;
+
+  const modelRow = await getModelCredentials(model.id);
+  if (
+    modelRow?.is_active
+    && modelRow.provider_id === 'google'
+    && modelRow.credentials?.api_key
+  ) {
+    return {
+      apiKey: modelRow.credentials.api_key,
+      source: 'model',
+      provider: 'google',
+    };
+  }
+
+  const moduleProvider = await getProviderCredentialsForApi(model.moduleId, 'google');
+  if (moduleProvider?.api_key) {
+    return {
+      apiKey: moduleProvider.api_key,
+      source: 'module_provider',
+      provider: 'google',
+    };
+  }
+
+  const globalProvider = await getProviderCredentialsForApi('_global', 'google');
+  if (globalProvider?.api_key) {
+    return {
+      apiKey: globalProvider.api_key,
+      source: 'global_provider',
+      provider: 'google',
+    };
+  }
+
+  const envKey = resolveGoogleApiKeyFromEnv();
+  if (envKey) {
+    return {
+      apiKey: envKey,
+      source: 'env',
+      provider: 'google',
+    };
+  }
+
+  return null;
+}
+
 export async function resolveCredentialsForModel(endpointOrId) {
   const model = findModelContext(endpointOrId);
   const providerId = model.provider;
@@ -401,6 +452,13 @@ export async function resolveCredentialsForModel(endpointOrId) {
 
   const falBacked = await resolveFalBackedCredentials(providerId, modelKey, moduleId);
   if (falBacked) return falBacked;
+
+  const directOnlyProviders = new Set([
+    'google', 'openai', 'ollama', 'wan2gp', 'local_audio', 'comfyui',
+  ]);
+  if (directOnlyProviders.has(providerId)) {
+    return null;
+  }
 
   const muapi = await resolveApiKeyForRouteGroup('generation', 'muapi');
   if (muapi?.apiKey) {

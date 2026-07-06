@@ -28,7 +28,18 @@ export async function POST(request, { params }) {
   try {
     const slug = await params;
     endpoint = (slug.path || []).join('/');
-    const payload = await request.json();
+    let payload;
+    try {
+      payload = await request.json();
+    } catch {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'La petición es demasiado grande o inválida. Vuelve a subir la imagen (se comprimirá automáticamente).',
+        },
+        { status: 413 }
+      );
+    }
     const legacyApiKey = getLegacyApiKey(request);
 
     const result = await routeGeneration(endpoint, payload, { legacyApiKey });
@@ -41,11 +52,17 @@ export async function POST(request, { params }) {
   } catch (error) {
     const message = error.message || 'Generation failed';
     let status = 502;
-    if (message.includes('No hay clave API') || message.includes('no configurada')) {
+    if (
+      message.includes('No hay clave API')
+      || message.includes('no configurada')
+      || message.includes('no configurado')
+    ) {
       status = 412;
     } else if (
       message.includes('Google AI')
+      || message.includes('Google')
       || message.includes('Gemini/')
+      || message.includes('Gemini')
       || message.includes('Imagen')
       || message.includes('Interactions')
       || message.includes('Veo')
@@ -54,9 +71,18 @@ export async function POST(request, { params }) {
       || message.includes('bloqueó')
       || message.includes('Se requiere un prompt')
       || message.includes('Se requiere un prompt o imagen')
-      || message.includes('Configura tu clave de OpenAI')
+      || message.includes('Configura tu clave')
+      || message.includes('API key')
+      || message.includes('clave de Google')
+      || message.includes('archivo temporal')
+      || message.includes('imagen de referencia')
+      || message.includes('imagen subida solo funciona')
+      || message.includes('MuAPI')
+      || /\(4\d\d\)/.test(message)
     ) {
       status = 400;
+    } else if (message.includes('timed out') || message.includes('tiempo de espera')) {
+      status = 504;
     }
 
     console.error('[generate]', endpoint, message);

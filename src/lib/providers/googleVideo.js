@@ -1,27 +1,25 @@
-/**
- * Adaptador Google AI Studio — Veo (text-to-video, image-to-video, referencias).
- * @see https://ai.google.dev/gemini-api/docs/video
- */
+import { fetchMediaBytes } from '@/src/lib/server/resolveMediaInput';
 
 const GOOGLE_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 /**
- * Mapeo app → modelos API Google (orden: GA primero, preview como respaldo).
- * veo-3.0-* fue retirado; Google recomienda veo-3.1-generate-001.
- * @see https://cloud.google.com/vertex-ai/generative-ai/docs/release-notes
+ * Modelos Veo en Gemini API (generativelanguage.googleapis.com).
+ * Solo IDs *-preview* soportan predictLongRunning en v1beta.
+ * Imágenes: formato Vertex { bytesBase64Encoded, mimeType }, NO inlineData.
+ * @see https://ai.google.dev/gemini-api/docs/video
  */
 const APP_TO_VEO_API = {
-  'veo3-text-to-video': ['veo-3.1-generate-preview', 'veo-3.1-generate-001'],
-  'veo3-fast-text-to-video': ['veo-3.1-fast-generate-preview', 'veo-3.1-fast-generate-001'],
-  'veo3-image-to-video': ['veo-3.1-generate-preview', 'veo-3.1-generate-001'],
-  'veo3-fast-image-to-video': ['veo-3.1-fast-generate-preview', 'veo-3.1-fast-generate-001'],
-  'veo3.1-text-to-video': ['veo-3.1-generate-preview', 'veo-3.1-generate-001'],
-  'veo3.1-fast-text-to-video': ['veo-3.1-fast-generate-preview', 'veo-3.1-fast-generate-001'],
+  'veo3-text-to-video': ['veo-3.1-generate-preview'],
+  'veo3-fast-text-to-video': ['veo-3.1-fast-generate-preview'],
+  'veo3-image-to-video': ['veo-3.1-generate-preview'],
+  'veo3-fast-image-to-video': ['veo-3.1-fast-generate-preview', 'veo-3.1-generate-preview'],
+  'veo3.1-text-to-video': ['veo-3.1-generate-preview'],
+  'veo3.1-fast-text-to-video': ['veo-3.1-fast-generate-preview'],
   'veo3.1-lite-text-to-video': ['veo-3.1-lite-generate-preview'],
-  'veo3.1-image-to-video': ['veo-3.1-generate-preview', 'veo-3.1-generate-001'],
-  'veo3.1-fast-image-to-video': ['veo-3.1-fast-generate-preview', 'veo-3.1-fast-generate-001'],
+  'veo3.1-image-to-video': ['veo-3.1-generate-preview'],
+  'veo3.1-fast-image-to-video': ['veo-3.1-fast-generate-preview', 'veo-3.1-generate-preview'],
   'veo3.1-lite-image-to-video': ['veo-3.1-lite-generate-preview'],
-  'veo3.1-reference-to-video': ['veo-3.1-generate-preview', 'veo-3.1-generate-001'],
+  'veo3.1-reference-to-video': ['veo-3.1-generate-preview'],
 };
 
 function uniqueList(items) {
@@ -35,13 +33,13 @@ function resolveVeoApiModelCandidates(modelId) {
   const id = String(modelId || '').toLowerCase();
   if (id.includes('lite')) return uniqueList(['veo-3.1-lite-generate-preview']);
   if (id.includes('fast') && id.includes('3.1')) {
-    return uniqueList(['veo-3.1-fast-generate-preview', 'veo-3.1-fast-generate-001']);
+    return uniqueList(['veo-3.1-fast-generate-preview']);
   }
   if (id.includes('fast')) {
-    return uniqueList(['veo-3.1-fast-generate-preview', 'veo-3.1-fast-generate-001']);
+    return uniqueList(['veo-3.1-fast-generate-preview']);
   }
-  if (id.includes('3.1')) return uniqueList(['veo-3.1-generate-preview', 'veo-3.1-generate-001']);
-  if (id.includes('veo')) return uniqueList(['veo-3.1-generate-preview', 'veo-3.1-generate-001']);
+  if (id.includes('3.1')) return uniqueList(['veo-3.1-generate-preview']);
+  if (id.includes('veo')) return uniqueList(['veo-3.1-generate-preview']);
   return [];
 }
 
@@ -52,7 +50,7 @@ function resolveVeoApiModel(modelId) {
 function isRetryableVeoError(message) {
   return (
     /\((400|404|403)\)/.test(message)
-    || /invalid|value|duration|resolution|not found|does not exist|unsupported|models\/veo/i.test(message)
+    || /invalid|value|duration|resolution|not found|does not exist|unsupported|models\/veo|inlineData|referenceImages/i.test(message)
   );
 }
 
@@ -76,27 +74,21 @@ function parseGoogleError(data, status, label = 'Veo') {
 
 export function isGoogleVideoModel(modelContext) {
   if (!modelContext) return false;
+  const id = String(modelContext.id || modelContext.endpoint || '').toLowerCase();
+  if (/veo/.test(id)) return true;
   const kind = modelContext.kind;
   if (!VIDEO_KINDS.has(kind)) return false;
-  const id = String(modelContext.id || modelContext.endpoint || '').toLowerCase();
   return /veo/.test(id);
 }
 
-async function urlToInlineImage(imageUrl) {
+async function urlToVeoImage(imageUrl) {
   if (!imageUrl) return null;
-  const url = String(imageUrl).trim();
-  if (url.startsWith('data:')) {
-    const match = url.match(/^data:([^;,]+)?;base64,(.+)$/);
-    if (!match) return null;
-    return { inlineData: { mimeType: match[1] || 'image/png', data: match[2] } };
-  }
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`No se pudo cargar la imagen de referencia (${response.status})`);
-  }
-  const buffer = Buffer.from(await response.arrayBuffer());
-  const mimeType = response.headers.get('content-type')?.split(';')[0] || 'image/png';
-  return { inlineData: { mimeType, data: buffer.toString('base64') } };
+  const media = await fetchMediaBytes(imageUrl);
+  if (!media) return null;
+  return {
+    mimeType: media.mimeType || 'image/jpeg',
+    bytesBase64Encoded: media.buffer.toString('base64'),
+  };
 }
 
 function normalizeAspectRatio(ratio) {
@@ -177,7 +169,7 @@ async function buildVeoInstance(modelContext, payload) {
   if (isReference && imagesList.length > 0) {
     instance.referenceImages = [];
     for (const img of imagesList.slice(0, 3)) {
-      const image = await urlToInlineImage(img);
+      const image = await urlToVeoImage(img);
       if (image) {
         instance.referenceImages.push({ image, referenceType: 'asset' });
       }
@@ -185,10 +177,10 @@ async function buildVeoInstance(modelContext, payload) {
   } else {
     const imageUrl = payload.image_url || imagesList[0];
     if (imageUrl) {
-      instance.image = await urlToInlineImage(imageUrl);
+      instance.image = await urlToVeoImage(imageUrl);
     }
     if (payload.last_image) {
-      instance.lastFrame = await urlToInlineImage(payload.last_image);
+      instance.lastFrame = await urlToVeoImage(payload.last_image);
     }
   }
 
@@ -264,7 +256,7 @@ export async function generateGoogleVideo(modelContext, payload, apiKey) {
   }
 
   const instance = await buildVeoInstance(modelContext, payload);
-  if (!instance.prompt && !instance.image && !instance.referenceImages?.length) {
+  if (!instance.prompt && !instance.image?.bytesBase64Encoded && !instance.referenceImages?.length) {
     throw new Error('Se requiere un prompt o imagen para generar el video');
   }
 

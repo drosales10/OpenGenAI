@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { generateVideo, generateI2V, processV2V, uploadFile } from "../muapi.js";
+import { generateVideo, generateI2V, processV2V, uploadMediaForModel } from "../muapi.js";
 import {
   allT2vModels,
   allI2vModels,
@@ -24,6 +24,15 @@ import {
 function getQualitiesForModel(modelList, modelId) {
   const model = modelList.find((m) => m.id === modelId);
   return model?.inputs?.quality?.enum || [];
+}
+
+function resolveImageUploadModelId(selectedModel, imageMode, allT2vModels, allI2vModels) {
+  if (imageMode) return selectedModel;
+  const currentT2V = allT2vModels.find((m) => m.id === selectedModel);
+  const sibling = currentT2V?.family
+    ? allI2vModels.find((m) => m.family === currentT2V.family)
+    : null;
+  return (sibling || allI2vModels[0])?.id || selectedModel;
 }
 
 async function downloadFile(url, filename) {
@@ -552,8 +561,15 @@ export default function VideoStudio({
     setImageUploading(true);
     setImageProgress(0);
     try {
-      const url = await uploadFile(apiKey, file, (pct) => {
-        setImageProgress(pct);
+      const uploadModelId = resolveImageUploadModelId(
+        selectedModel,
+        imageMode,
+        allT2vModels,
+        allI2vModels,
+      );
+      const url = await uploadMediaForModel(apiKey, file, {
+        modelId: uploadModelId,
+        onProgress: (pct) => setImageProgress(pct),
       });
       setUploadedImageUrl(url);
       setUploadedVideoUrl(null);
@@ -600,8 +616,9 @@ export default function VideoStudio({
     setVideoUploading(true);
     setVideoProgress(0);
     try {
-      const url = await uploadFile(apiKey, file, (pct) => {
-        setVideoProgress(pct);
+      const url = await uploadMediaForModel(apiKey, file, {
+        modelId: selectedModel,
+        onProgress: (pct) => setVideoProgress(pct),
       });
       setUploadedVideoUrl(url);
       setUploadedVideoName(file.name);
@@ -679,8 +696,15 @@ export default function VideoStudio({
     setImageProgress(0);
 
     try {
-      const url = await uploadFile(apiKey, file, (pct) => {
-        setImageProgress(pct);
+      const uploadModelId = resolveImageUploadModelId(
+        selectedModel,
+        imageMode,
+        allT2vModels,
+        allI2vModels,
+      );
+      const url = await uploadMediaForModel(apiKey, file, {
+        modelId: uploadModelId,
+        onProgress: (pct) => setImageProgress(pct),
       });
       setUploadedImageUrl(url);
 
@@ -772,8 +796,9 @@ export default function VideoStudio({
     setEndImageUploading(true);
     setEndImageProgress(0);
     try {
-      const url = await uploadFile(apiKey, file, (pct) => {
-        setEndImageProgress(pct);
+      const url = await uploadMediaForModel(apiKey, file, {
+        modelId: selectedModel,
+        onProgress: (pct) => setEndImageProgress(pct),
       });
       setUploadedEndImageUrl(url);
     } catch (err) {
@@ -798,8 +823,9 @@ export default function VideoStudio({
     setVideoUploading(true);
     setVideoProgress(0);
     try {
-      const url = await uploadFile(apiKey, file, (pct) => {
-        setVideoProgress(pct);
+      const url = await uploadMediaForModel(apiKey, file, {
+        modelId: selectedModel,
+        onProgress: (pct) => setVideoProgress(pct),
       });
       setUploadedVideoUrl(url);
       setUploadedVideoName(file.name);

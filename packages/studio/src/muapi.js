@@ -1,5 +1,5 @@
 import { getModelById, getVideoModelById, getI2IModelById, getI2VModelById, getV2VModelById, getRecastModelById, getLipSyncModelById, getAudioModelById } from './models.js';
-import { getStudioModelById, getLocalTtsModelById } from './studioModels.js';
+import { getStudioModelById, getLocalTtsModelById, isLocalProviderModelId } from './studioModels.js';
 
 function resolveModelEndpoint(modelId, fallbackFn) {
     const studio = getStudioModelById(modelId);
@@ -15,6 +15,162 @@ const BASE_URL = (typeof window !== 'undefined' && window.location?.protocol?.st
     ? '/api'
     : 'https://api.muapi.ai';
 const PROXY_WF_BASE = '/api/workflow';
+const INTERNAL_API_KEY_STORAGE = 'internal_api_key';
+
+function getStoredInternalApiKey() {
+    if (typeof window === 'undefined') return '';
+    try {
+        return localStorage.getItem(INTERNAL_API_KEY_STORAGE) || '';
+    } catch {
+        return '';
+    }
+}
+
+/** Auth headers for Next.js MuAPI proxy routes (/api/api/v1, /api/workflow, /api/app). */
+function buildProxyAuthHeaders(muapiKey, { json = true } = {}) {
+    const headers = {};
+    if (json) headers['Content-Type'] = 'application/json';
+    const internalKey = getStoredInternalApiKey();
+    if (internalKey) {
+        headers['x-internal-api-key'] = internalKey;
+    } else if (muapiKey) {
+        headers['x-api-key'] = muapiKey;
+    }
+    return headers;
+}
+
+function applyProxyAuthToXhr(xhr, muapiKey) {
+    const internalKey = getStoredInternalApiKey();
+    if (internalKey) {
+        xhr.setRequestHeader('x-internal-api-key', internalKey);
+    } else if (muapiKey) {
+        xhr.setRequestHeader('x-api-key', muapiKey);
+    }
+}
+
+export function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo'));
+        reader.readAsDataURL(file);
+    });
+}
+
+function resolveModelRecord(modelId) {
+    if (!modelId) return null;
+    return (
+        getStudioModelById(modelId)
+        || getI2VModelById(modelId)
+        || getVideoModelById(modelId)
+        || getI2IModelById(modelId)
+        || getModelById(modelId)
+        || null
+    );
+}
+
+/** Rutas de subida que no requieren créditos MuAPI (el backend acepta data: URL). */
+function inferUploadRoute(modelId) {
+    const model = resolveModelRecord(modelId);
+    if (model?.provider) {
+        if (['google', 'openai', 'ollama', 'local_audio', 'comfyui'].includes(model.provider)) {
+            return 'inline';
+        }
+        if (model.provider === 'wan2gp') return 'wan2gp';
+    }
+    const id = String(modelId || '').toLowerCase();
+    if (/veo|gemini|imagen|nano-banana/.test(id)) return 'inline';
+    if (/sora|gpt-image/.test(id)) return 'inline';
+    if (id.startsWith('wan2gp-')) return 'wan2gp';
+    if (id.startsWith('comfy-') || id.startsWith('ollama-')) return 'inline';
+    if (isLocalProviderModelId(modelId)) return 'inline';
+    return 'muapi';
+}
+
+async function uploadToWan2gpApi(file, onProgress) {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (onProgress) onProgress(50);
+    const res = await fetch('/api/wan2gp/upload', { method: 'POST', body: formData });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+        throw new Error(data.error || `Wan2GP upload falló (${res.status})`);
+    }
+    if (onProgress) onProgress(100);
+    return data.url;
+}
+
+async function compressImageFile(file) {
+    if (typeof window === 'undefined' || !file?.type?.startsWith('image/')) return file;
+    try {
+        const bitmap = await createImageBitmap(file);
+        const maxDim = 1536;
+        const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+        if (scale >= 1 && file.size < 1.5 * 1024 * 1024) {
+            bitmap.close?.();
+            return file;
+        }
+        const w = Math.max(1, Math.round(bitmap.width * scale));
+        const h = Math.max(1, Math.round(bitmap.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+        bitmap.close?.();
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85));
+        if (!blob) return file;
+        const base = (file.name || 'upload').replace(/\.[^.]+$/, '') || 'upload';
+        return new File([blob], `${base}.jpg`, { type: 'image/jpeg' });
+    } catch {
+        return file;
+    }
+}
+
+async function uploadToStagingApi(file, onProgress) {
+    const prepared = await compressImageFile(file);
+    const form = new FormData();
+    form.append('file', prepared);
+    if (onProgress) onProgress(40);
+    const res = await fetch('/api/generate/staging/upload', { method: 'POST', body: form });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+        throw new Error(data.error || `Error al preparar imagen (${res.status})`);
+    }
+    if (onProgress) onProgress(100);
+    return data.url;
+}
+
+/**
+ * Sube un archivo según el proveedor del modelo.
+ * Google Veo / Gemini y rutas directas usan staging local (sin créditos MuAPI).
+ */
+export async function uploadMediaForModel(apiKey, file, { modelId, onProgress } = {}) {
+    const route = inferUploadRoute(modelId);
+    if (route === 'inline') {
+        if (typeof window !== 'undefined' && window.location?.protocol?.startsWith('http')) {
+            return uploadToStagingApi(file, onProgress);
+        }
+        if (onProgress) onProgress(100);
+        return fileToDataUrl(file);
+    }
+    if (route === 'wan2gp') {
+        return uploadToWan2gpApi(file, onProgress);
+    }
+    try {
+        return await uploadFile(apiKey, file, onProgress);
+    } catch (err) {
+        const isCreditError = /credit/i.test(String(err.message || ''));
+        const isImage = file?.type?.startsWith('image/');
+        if (isCreditError && isImage) {
+            if (typeof window !== 'undefined' && window.location?.protocol?.startsWith('http')) {
+                return uploadToStagingApi(file, onProgress);
+            }
+            if (onProgress) onProgress(100);
+            return fileToDataUrl(file);
+        }
+        throw err;
+    }
+}
 
 function normalizeVeoPayload(modelId, payload) {
     if (!modelId || !/veo/i.test(String(modelId))) return payload;
@@ -37,7 +193,7 @@ async function pollForResult(requestId, key, maxAttempts = 900, interval = 2000)
         await new Promise(resolve => setTimeout(resolve, interval));
         try {
             const response = await fetch(pollUrl, {
-                headers: { 'Content-Type': 'application/json', 'x-api-key': key }
+                headers: buildProxyAuthHeaders(key),
             });
             if (!response.ok) {
                 const errText = await response.text();
@@ -64,7 +220,7 @@ async function submitAndPoll(endpoint, payload, key, onRequestId, maxAttempts = 
 
     const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(key ? { 'x-api-key': key } : {}) },
+        headers: buildProxyAuthHeaders(key),
         body: JSON.stringify(payload)
     });
     if (!response.ok) {
@@ -278,7 +434,7 @@ export function uploadFile(apiKey, file, onProgress) {
 
         const xhr = new XMLHttpRequest();
         xhr.open('POST', url);
-        xhr.setRequestHeader('x-api-key', apiKey);
+        applyProxyAuthToXhr(xhr, apiKey);
 
         if (onProgress) {
             xhr.upload.onprogress = (event) => {
@@ -322,10 +478,7 @@ export function uploadFile(apiKey, file, onProgress) {
 
 export async function getUserBalance(apiKey) {
     const response = await fetch(`${BASE_URL}/api/v1/account/balance`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -337,10 +490,7 @@ export async function getUserBalance(apiKey) {
 
 export async function getTemplateWorkflows(apiKey) {
     const response = await fetch(`${BASE_URL}/workflow/get-template-workflows`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -351,10 +501,7 @@ export async function getTemplateWorkflows(apiKey) {
 
 export async function getUserWorkflows(apiKey) {
     const response = await fetch(`${BASE_URL}/workflow/get-workflow-defs`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -365,10 +512,7 @@ export async function getUserWorkflows(apiKey) {
 
 export async function getPublishedWorkflows(apiKey) {
     const response = await fetch(`${BASE_URL}/workflow/get-published-workflows`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -380,10 +524,7 @@ export async function getPublishedWorkflows(apiKey) {
 // Agents — uses direct URL → https://api.muapi.ai/agents/...
 export async function getTemplateAgents(apiKey) {
     const response = await fetch(`${BASE_URL}/agents/templates/agents`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -395,10 +536,7 @@ export async function getTemplateAgents(apiKey) {
 
 export async function getUserAgents(apiKey) {
     const response = await fetch(`${BASE_URL}/agents/user/agents`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -411,10 +549,7 @@ export async function getUserAgents(apiKey) {
 export async function getPublishedAgents(apiKey) {
     // MuAPI: GET /agents/featured/agents
     const response = await fetch(`${BASE_URL}/agents/featured/agents`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -427,10 +562,7 @@ export async function getPublishedAgents(apiKey) {
 // GET /agents/user/conversations — returns the user's chat history across all agents
 export async function getUserConversations(apiKey) {
     const response = await fetch(`${BASE_URL}/agents/user/conversations`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -443,10 +575,7 @@ export async function getUserConversations(apiKey) {
 export async function createWorkflow(apiKey, payload) {
     const response = await fetch(`${BASE_URL}/workflow/create`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        },
+        headers: buildProxyAuthHeaders(apiKey),
         body: JSON.stringify(payload)
     });
     if (!response.ok) {
@@ -459,10 +588,7 @@ export async function createWorkflow(apiKey, payload) {
 export async function updateWorkflowName(apiKey, workflowId, name) {
     const response = await fetch(`${BASE_URL}/workflow/update-name/${workflowId}`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        },
+        headers: buildProxyAuthHeaders(apiKey),
         body: JSON.stringify({ name })
     });
     if (!response.ok) {
@@ -475,10 +601,7 @@ export async function updateWorkflowName(apiKey, workflowId, name) {
 export async function deleteWorkflow(apiKey, workflowId) {
     const response = await fetch(`${BASE_URL}/workflow/delete-workflow-def/${workflowId}`, {
         method: 'DELETE',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -489,10 +612,7 @@ export async function deleteWorkflow(apiKey, workflowId) {
 
 export async function getWorkflowInputs(apiKey, workflowId) {
     const response = await fetch(`${BASE_URL}/workflow/${workflowId}/api-inputs`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -504,10 +624,7 @@ export async function getWorkflowInputs(apiKey, workflowId) {
 export async function executeWorkflow(apiKey, workflowId, inputs) {
     const response = await fetch(`${BASE_URL}/workflow/${workflowId}/api-execute`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        },
+        headers: buildProxyAuthHeaders(apiKey),
         body: JSON.stringify({ inputs })
     });
     if (!response.ok) {
@@ -528,7 +645,7 @@ async function pollWorkflowResult(runId, apiKey, maxAttempts = 900, interval = 2
         await new Promise(resolve => setTimeout(resolve, interval));
         try {
             const response = await fetch(pollUrl, {
-                headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey }
+                headers: buildProxyAuthHeaders(apiKey),
             });
             if (!response.ok) {
                 if (response.status >= 500) continue;
@@ -547,10 +664,7 @@ async function pollWorkflowResult(runId, apiKey, maxAttempts = 900, interval = 2
 
 export async function getAllNodeSchemas(apiKey, workflowId) {
     const response = await fetch(`${BASE_URL}/workflow/${workflowId}/node-schemas`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -561,10 +675,7 @@ export async function getAllNodeSchemas(apiKey, workflowId) {
 
 export async function getWorkflowData(apiKey, workflowId) {
     const response = await fetch(`${BASE_URL}/workflow/get-workflow-def/${workflowId}`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -575,10 +686,7 @@ export async function getWorkflowData(apiKey, workflowId) {
 
 export async function getNodeSchemas(apiKey, workflowId) {
     const response = await fetch(`${BASE_URL}/workflow/${workflowId}/api-node-schemas`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -590,10 +698,7 @@ export async function getNodeSchemas(apiKey, workflowId) {
 export async function runSingleNode(apiKey, workflowId, nodeId, payload) {
     const response = await fetch(`${BASE_URL}/workflow/${workflowId}/node/${nodeId}/run`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        },
+        headers: buildProxyAuthHeaders(apiKey),
         body: JSON.stringify(payload)
     });
     if (!response.ok) {
@@ -606,10 +711,7 @@ export async function runSingleNode(apiKey, workflowId, nodeId, payload) {
 export async function deleteNodeRun(apiKey, nodeRunId) {
     const response = await fetch(`${BASE_URL}/workflow/node-run/${nodeRunId}`, {
         method: 'DELETE',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -620,10 +722,7 @@ export async function deleteNodeRun(apiKey, nodeRunId) {
 
 export async function getNodeStatus(apiKey, runId) {
     const response = await fetch(`${BASE_URL}/workflow/run/${runId}/status`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();
@@ -705,10 +804,7 @@ export async function handleServerSideProxy(prefix, request, params, apiKey) {
 export async function calculateDynamicCost(apiKey, taskName, payload) {
     const response = await fetch(`${BASE_URL}/api/v1/app/calculate_dynamic_cost`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        },
+        headers: buildProxyAuthHeaders(apiKey),
         body: JSON.stringify({ task_name: taskName, payload })
     });
     if (!response.ok) {
@@ -721,10 +817,7 @@ export async function calculateDynamicCost(apiKey, taskName, payload) {
 export async function registerAppInterest(apiKey, appName) {
     const response = await fetch(`${BASE_URL}/app/interest`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        },
+        headers: buildProxyAuthHeaders(apiKey),
         body: JSON.stringify({ app_name: appName })
     });
     if (!response.ok) {
@@ -736,10 +829,7 @@ export async function registerAppInterest(apiKey, appName) {
 
 export async function getAppInterests(apiKey) {
     const response = await fetch(`${BASE_URL}/app/interests`, {
-        headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey
-        }
+        headers: buildProxyAuthHeaders(apiKey),
     });
     if (!response.ok) {
         const errText = await response.text();

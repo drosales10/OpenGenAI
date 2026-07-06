@@ -23,18 +23,47 @@ import { resolveLocalAudioHostFromEnv } from '@/src/lib/providers/localAudioShar
 import { generateXtts, isLocalTtsModel } from '@/src/lib/providers/xtts';
 import { generateComfyui, isComfyuiModel } from '@/src/lib/providers/comfyui';
 import { resolveComfyuiHostFromEnv } from '@/src/lib/providers/comfyuiShared';
+import { generateFalWanEffects, isFalWanEffectsModel } from '@/src/lib/providers/falWanEffects';
+import { resolveFalApiKeyFromEnv } from '@/src/lib/providers/falShared';
+import { getProviderCredentialsForApi } from '@/src/lib/db/providerCredentials';
+import {
+  hydratePayloadStagingMedia,
+  payloadUsesStagingMedia,
+} from '@/src/lib/server/hydrateStagingMedia';
 
 const MUAPI_BASE = 'https://api.muapi.ai';
 
-function payloadUsesStagingMedia(payload = {}) {
-  const isStaging = (value) => typeof value === 'string' && value.startsWith('staging://');
-  if (isStaging(payload.image_url) || isStaging(payload.start_image_url) || isStaging(payload.last_image)) {
-    return true;
+async function resolveFalDirectApiKey(credentials) {
+  if (credentials?.provider === 'fal' && credentials.apiKey) {
+    return { apiKey: credentials.apiKey, source: credentials.source || 'fal' };
   }
-  if (Array.isArray(payload.images_list) && payload.images_list.some(isStaging)) {
-    return true;
+  const envKey = resolveFalApiKeyFromEnv();
+  if (envKey) return { apiKey: envKey, source: 'env' };
+  const global = await getProviderCredentialsForApi('_global', 'fal');
+  if (global?.api_key) {
+    return { apiKey: global.api_key, source: 'global_provider' };
   }
-  return false;
+  return null;
+}
+
+async function tryRouteFalWanEffects(modelContext, payload, credentials) {
+  if (!isFalWanEffectsModel(modelContext)) return null;
+
+  const falCreds = await resolveFalDirectApiKey(credentials);
+  if (!falCreds?.apiKey) return null;
+
+  const hydrated = await hydratePayloadStagingMedia(payload, {
+    target: 'fal',
+    apiKey: falCreds.apiKey,
+  });
+
+  const result = await generateFalWanEffects(modelContext, hydrated, falCreds.apiKey);
+  return {
+    ...result,
+    routing: 'direct',
+    provider: 'wan',
+    credential_source: falCreds.source,
+  };
 }
 
 async function tryRouteGoogleDirect(modelContext, payload, credentials, endpoint) {
@@ -97,11 +126,12 @@ async function pollMuapiResult(requestId, apiKey, maxAttempts = 120, interval = 
 }
 
 async function generateViaMuapi(endpoint, payload, apiKey) {
+  const { model_id: _modelId, app_model_id: _appModelId, model: _model, ...muapiPayload } = payload || {};
   const url = `${MUAPI_BASE}/api/v1/${endpoint}`;
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(muapiPayload),
   });
 
   if (!response.ok) {
@@ -120,14 +150,20 @@ async function generateViaMuapi(endpoint, payload, apiKey) {
 }
 
 export async function routeGeneration(endpoint, payload, { legacyApiKey = null } = {}) {
-  const modelContext = findModelContext(endpoint);
-  const credentials = await resolveCredentialsForModel(endpoint);
+  const modelId = payload?.model_id || payload?.app_model_id || payload?.model;
+  const modelContext = findModelContext(endpoint, { modelId });
+  const credentialsKey = modelContext.id || endpoint;
+  const credentials = await resolveCredentialsForModel(credentialsKey);
 
   // Google (Veo/Gemini): ruta directa siempre que haya clave Google disponible.
-  const googleDirect = await tryRouteGoogleDirect(modelContext, payload, credentials, endpoint);
+  const googleDirect = await tryRouteGoogleDirect(modelContext, payload, credentials, credentialsKey);
   if (googleDirect) return googleDirect;
 
-  const useDirect = credentials && (await shouldUseDirectProvider(endpoint, credentials));
+  // Wan AI Effects (ai-video-effects) → fal.ai cuando hay FAL_KEY.
+  const falWanEffects = await tryRouteFalWanEffects(modelContext, payload, credentials);
+  if (falWanEffects) return falWanEffects;
+
+  const useDirect = credentials && (await shouldUseDirectProvider(credentialsKey, credentials));
 
   if (useDirect && credentials.provider === 'openai') {
     if (isOpenAIVideoModel(modelContext)) {
@@ -176,7 +212,11 @@ export async function routeGeneration(endpoint, payload, { legacyApiKey = null }
     && ['kling', 'minimax', 'bytedance', 'wan', 'runway'].includes(credentials.provider)
     && isFalVideoModel(modelContext)
   ) {
-    const result = await generateFalVideo(modelContext, payload, credentials.apiKey);
+    const falPayload = await hydratePayloadStagingMedia(payload, {
+      target: 'fal',
+      apiKey: credentials.apiKey,
+    });
+    const result = await generateFalVideo(modelContext, falPayload, credentials.apiKey);
     return {
       ...result,
       routing: 'direct',
@@ -288,13 +328,6 @@ export async function routeGeneration(endpoint, payload, { legacyApiKey = null }
     throw new Error(
       'Configura tu clave de Google AI Studio en Settings → Claves API (modelo Veo/Gemini), '
       + 'o añade GOOGLE_API_KEY en el archivo .env del servidor.'
-    );
-  }
-
-  if (payloadUsesStagingMedia(payload)) {
-    throw new Error(
-      'La imagen subida solo funciona con generación directa (Google, Ollama, ComfyUI local). '
-      + 'Este modelo está intentando usar MuAPI; configura la clave del proveedor correcto.'
     );
   }
 
@@ -417,12 +450,43 @@ export async function routeGeneration(endpoint, payload, { legacyApiKey = null }
   }
 
   if (!muapiKey) {
+    if (payloadUsesStagingMedia(payload) && isFalWanEffectsModel(modelContext)) {
+      throw new Error(
+        'Configura FAL_KEY en .env o tu clave fal.ai en Settings para usar AI Video Effects '
+        + 'sin créditos MuAPI (ruta directa fal-ai/wan-effects).'
+      );
+    }
+    if (payloadUsesStagingMedia(payload)) {
+      throw new Error(
+        'La imagen está en el servidor local pero no hay clave MuAPI para subirla. '
+        + 'Configura MuAPI en Settings o usa un proveedor directo (Google, fal.ai, ComfyUI).'
+      );
+    }
     throw new Error(
-      'No hay clave API configurada para este modelo. Ve a Settings → Claves API y configura tu clave (Google, MuAPI, etc.).'
+      'No hay clave API configurada para este modelo. Ve a Settings → Claves API y configura tu clave (Google, MuAPI, fal.ai, etc.).'
     );
   }
 
-  const result = await generateViaMuapi(endpoint, payload, muapiKey);
+  let muapiPayload = payload;
+  if (payloadUsesStagingMedia(payload)) {
+    try {
+      muapiPayload = await hydratePayloadStagingMedia(payload, {
+        target: 'muapi',
+        apiKey: muapiKey,
+      });
+    } catch (error) {
+      const detail = error.message || 'error de subida';
+      if (/credit/i.test(detail)) {
+        throw new Error(
+          'MuAPI sin créditos para subir la imagen. Añade FAL_KEY para AI Video Effects '
+          + 'o recarga créditos MuAPI.'
+        );
+      }
+      throw new Error(`No se pudo preparar la imagen para MuAPI: ${detail}`);
+    }
+  }
+
+  const result = await generateViaMuapi(endpoint, muapiPayload, muapiKey);
   return {
     ...result,
     routing: 'muapi',
@@ -435,20 +499,25 @@ export async function getGenerationRoutingInfo(endpoint) {
   const modelContext = findModelContext(endpoint);
   const credentials = await resolveCredentialsForModel(endpoint);
   const googleCreds = await resolveGoogleDirectCredentials(endpoint);
+  const falCreds = await resolveFalDirectApiKey(credentials);
   const useDirect = credentials && (await shouldUseDirectProvider(endpoint, credentials));
   const googleDirect = Boolean(googleCreds?.apiKey)
     && (isGoogleVideoModel(modelContext) || isGoogleImageModel(modelContext.id));
+  const falWanDirect = Boolean(falCreds?.apiKey) && isFalWanEffectsModel(modelContext);
 
   return {
     model_key: modelContext.id,
     model_name: modelContext.name,
     provider_id: modelContext.provider,
     module_id: modelContext.moduleId,
-    configured: Boolean(credentials?.apiKey || googleCreds?.apiKey || credentials?.baseUrl),
-    routing: googleDirect || useDirect ? 'direct' : credentials ? 'muapi' : 'none',
-    credential_source: googleCreds?.source || credentials?.source || null,
+    configured: Boolean(
+      credentials?.apiKey || googleCreds?.apiKey || falCreds?.apiKey || credentials?.baseUrl
+    ),
+    routing: googleDirect || falWanDirect || useDirect ? 'direct' : credentials ? 'muapi' : 'none',
+    credential_source: googleCreds?.source || falCreds?.source || credentials?.source || null,
     supports_direct:
-      (modelContext.provider === 'google'
+      isFalWanEffectsModel(modelContext)
+      || (modelContext.provider === 'google'
         && (isGoogleImageModel(modelContext.id) || isGoogleVideoModel(modelContext)))
       || (modelContext.provider === 'openai'
         && (isOpenAIImageModel(modelContext) || isOpenAIVideoModel(modelContext)))

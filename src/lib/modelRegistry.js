@@ -142,7 +142,13 @@ export function findModelByEndpoint(endpointOrId) {
   return ENDPOINT_INDEX.get(endpointOrId) || null;
 }
 
-export function findModelContext(endpointOrId) {
+export function findModelContext(endpointOrId, options = {}) {
+  const preferredId = options.modelId || options.model_id || options.appModelId;
+  if (preferredId) {
+    const byId = findModelByEndpoint(preferredId);
+    if (byId) return byId;
+  }
+
   const model = findModelByEndpoint(endpointOrId);
   if (!model) {
     return {

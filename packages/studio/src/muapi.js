@@ -73,7 +73,7 @@ function resolveModelRecord(modelId) {
 function inferUploadRoute(modelId) {
     const model = resolveModelRecord(modelId);
     if (model?.provider) {
-        if (['google', 'openai', 'ollama', 'local_audio', 'comfyui'].includes(model.provider)) {
+        if (['google', 'openai', 'ollama', 'local_audio', 'comfyui', 'wan'].includes(model.provider)) {
             return 'inline';
         }
         if (model.provider === 'wan2gp') return 'wan2gp';
@@ -83,8 +83,14 @@ function inferUploadRoute(modelId) {
     if (/sora|gpt-image/.test(id)) return 'inline';
     if (id.startsWith('wan2gp-')) return 'wan2gp';
     if (id.startsWith('comfy-') || id.startsWith('ollama-')) return 'inline';
+    if (/generate_wan_ai_effects|ai-video-effects/.test(id)) return 'inline';
     if (isLocalProviderModelId(modelId)) return 'inline';
     return 'muapi';
+}
+
+function stampModelId(payload, modelId) {
+    if (modelId) payload.model_id = String(modelId);
+    return payload;
 }
 
 async function uploadToWan2gpApi(file, onProgress) {
@@ -266,7 +272,7 @@ export async function generateImage(apiKey, params) {
         payload.image_url = null;
     }
     if (params.seed && params.seed !== -1) payload.seed = params.seed;
-    return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 60);
+    return submitAndPoll(endpoint, stampModelId(payload, params.model), apiKey, params.onRequestId, 60);
 }
 
 export async function generateI2I(apiKey, params) {
@@ -289,7 +295,7 @@ export async function generateI2I(apiKey, params) {
     if (modelInfo?.inputs?.name) {
         payload.name = params.name || modelInfo.inputs.name.default;
     }
-    return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 60);
+    return submitAndPoll(endpoint, stampModelId(payload, params.model), apiKey, params.onRequestId, 60);
 }
 
 export async function generateVideo(apiKey, params) {
@@ -304,7 +310,7 @@ export async function generateVideo(apiKey, params) {
     if (params.mode) payload.mode = params.mode;
     if (params.image_url) payload.image_url = params.image_url;
     normalizeVeoPayload(params.model, payload);
-    return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 900);
+    return submitAndPoll(endpoint, stampModelId(payload, params.model), apiKey, params.onRequestId, 900);
 }
 
 export async function generateI2V(apiKey, params) {
@@ -340,7 +346,7 @@ export async function generateI2V(apiKey, params) {
         payload.name = params.name || modelInfo.inputs.name.default;
     }
     normalizeVeoPayload(params.model, payload);
-    return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 900);
+    return submitAndPoll(endpoint, stampModelId(payload, params.model), apiKey, params.onRequestId, 900);
 }
 
 export async function generateMarketingStudioAd(apiKey, params) {
@@ -366,7 +372,7 @@ export async function processV2V(apiKey, params) {
     if (modelInfo?.hasPrompt && params.prompt) {
         payload.prompt = params.prompt;
     }
-    return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 900);
+    return submitAndPoll(endpoint, stampModelId(payload, params.model), apiKey, params.onRequestId, 900);
 }
 
 export async function processRecast(apiKey, params) {
@@ -383,7 +389,7 @@ export async function processRecast(apiKey, params) {
     if (params.aspect_ratio) {
         payload.aspect_ratio = params.aspect_ratio;
     }
-    return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 900);
+    return submitAndPoll(endpoint, stampModelId(payload, params.model), apiKey, params.onRequestId, 900);
 }
 
 export async function processLipSync(apiKey, params) {
@@ -396,7 +402,7 @@ export async function processLipSync(apiKey, params) {
     if (modelInfo?.hasPrompt) payload.prompt = params.prompt || '';
     if (params.resolution) payload.resolution = params.resolution;
     if (params.seed !== undefined && params.seed !== -1) payload.seed = params.seed;
-    return submitAndPoll(endpoint, payload, apiKey, params.onRequestId, 900);
+    return submitAndPoll(endpoint, stampModelId(payload, params.model), apiKey, params.onRequestId, 900);
 }
 
 /** TTS local XTTS v2 (Lip Sync Studio) */

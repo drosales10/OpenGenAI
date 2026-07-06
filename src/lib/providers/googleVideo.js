@@ -5,7 +5,8 @@ const GOOGLE_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 /**
  * Modelos Veo en Gemini API (generativelanguage.googleapis.com).
  * Solo IDs *-preview* soportan predictLongRunning en v1beta.
- * Imágenes: formato Vertex { bytesBase64Encoded, mimeType }, NO inlineData.
+ * Imágenes: predictLongRunning usa formato Vertex { bytesBase64Encoded, mimeType }.
+ * NO usar inlineData (generateContent) — Veo lo rechaza con 400.
  * @see https://ai.google.dev/gemini-api/docs/video
  */
 const APP_TO_VEO_API = {
@@ -48,10 +49,17 @@ function resolveVeoApiModel(modelId) {
 }
 
 function isRetryableVeoError(message) {
+  if (/inlineData|bytesBase64Encoded isn't supported/i.test(message)) return false;
   return (
     /\((400|404|403)\)/.test(message)
-    || /invalid|value|duration|resolution|not found|does not exist|unsupported|models\/veo|inlineData|referenceImages/i.test(message)
+    || /invalid|value|duration|resolution|not found|does not exist|unsupported|models\/veo|referenceImages/i.test(message)
   );
+}
+
+function normalizeVeoMimeType(mimeType) {
+  const mime = String(mimeType || 'image/jpeg').toLowerCase().split(';')[0];
+  if (mime === 'image/png') return 'image/png';
+  return 'image/jpeg';
 }
 
 const VIDEO_KINDS = new Set(['t2v', 'i2v', 'v2v']);
@@ -86,9 +94,13 @@ async function urlToVeoImage(imageUrl) {
   const media = await fetchMediaBytes(imageUrl);
   if (!media) return null;
   return {
-    mimeType: media.mimeType || 'image/jpeg',
+    mimeType: normalizeVeoMimeType(media.mimeType),
     bytesBase64Encoded: media.buffer.toString('base64'),
   };
+}
+
+function veoImageHasBytes(image) {
+  return Boolean(image?.bytesBase64Encoded || image?.imageBytes);
 }
 
 function normalizeAspectRatio(ratio) {
@@ -129,6 +141,11 @@ function buildVeoParameterAttempts(payload, modelContext) {
   const aspectRatio = normalizeAspectRatio(payload.aspect_ratio);
   const resolution = normalizeResolution(payload.resolution);
   const duration = resolveDurationSeconds(payload, resolution, modelContext);
+  const hasImage = Boolean(
+    payload.image_url
+    || payload.images_list?.length
+    || payload.last_image
+  );
   const attempts = [];
 
   if (resolution === '1080p' || resolution === '4k') {
@@ -150,12 +167,16 @@ function buildVeoParameterAttempts(payload, modelContext) {
   attempts.push({ aspectRatio });
 
   const seen = new Set();
-  return attempts.filter((parameters) => {
-    const key = JSON.stringify(parameters);
-    if (seen.has(key)) return false;
+  const result = [];
+  for (const parameters of attempts) {
+    const next = { ...parameters };
+    if (hasImage) next.personGeneration = 'allow_adult';
+    const key = JSON.stringify(next);
+    if (seen.has(key)) continue;
     seen.add(key);
-    return true;
-  });
+    result.push(next);
+  }
+  return result;
 }
 
 async function buildVeoInstance(modelContext, payload) {
@@ -187,12 +208,53 @@ async function buildVeoInstance(modelContext, payload) {
   return instance;
 }
 
+function fileResourceToDownloadUri(nameOrUri) {
+  const raw = String(nameOrUri || '').trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const id = raw.replace(/^files\//, '');
+  return `https://generativelanguage.googleapis.com/v1beta/files/${id}:download?alt=media`;
+}
+
 function extractVideoUri(completedOperation) {
-  return (
-    completedOperation?.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri
-    || completedOperation?.response?.generatedVideos?.[0]?.video?.uri
-    || completedOperation?.response?.generated_videos?.[0]?.video?.uri
-  );
+  const response = completedOperation?.response || completedOperation?.result;
+  const generateVideoResponse = response?.generateVideoResponse;
+
+  const directUri =
+    generateVideoResponse?.generatedSamples?.[0]?.video?.uri
+    || response?.generatedVideos?.[0]?.video?.uri
+    || response?.generated_videos?.[0]?.video?.uri;
+
+  if (directUri) return directUri;
+
+  const fileRef =
+    generateVideoResponse?.generatedSamples?.[0]?.video?.name
+    || response?.generatedVideos?.[0]?.video?.name
+    || response?.generated_videos?.[0]?.video?.name;
+
+  return fileResourceToDownloadUri(fileRef);
+}
+
+function buildVeoCompletionError(completedOperation, apiModel) {
+  const response = completedOperation?.response || completedOperation?.result;
+  const generateVideoResponse = response?.generateVideoResponse;
+  const raiReasons = generateVideoResponse?.raiMediaFilteredReasons;
+  const filteredCount = generateVideoResponse?.raiMediaFilteredCount;
+
+  if (Array.isArray(raiReasons) && raiReasons.length > 0) {
+    const summary = raiReasons.join(' ');
+    if (filteredCount > 0 || !generateVideoResponse?.generatedSamples?.length) {
+      return `Veo/${apiModel} bloqueó el video por políticas de contenido: ${summary}`;
+    }
+    return `Veo/${apiModel} generó el video con restricciones: ${summary}`;
+  }
+
+  if (filteredCount > 0) {
+    return `Veo/${apiModel} filtró el resultado (${filteredCount} muestra(s)). Prueba otro prompt o imagen.`;
+  }
+
+  const snippet = JSON.stringify(response || completedOperation).slice(0, 280);
+  return `Veo/${apiModel} completó sin URL de video. Respuesta: ${snippet}`;
 }
 
 async function pollVeoOperation(operationName, apiKey, maxAttempts = 40) {
@@ -256,7 +318,11 @@ export async function generateGoogleVideo(modelContext, payload, apiKey) {
   }
 
   const instance = await buildVeoInstance(modelContext, payload);
-  if (!instance.prompt && !instance.image?.bytesBase64Encoded && !instance.referenceImages?.length) {
+  if (
+    !instance.prompt
+    && !veoImageHasBytes(instance.image)
+    && !instance.referenceImages?.some((ref) => veoImageHasBytes(ref.image))
+  ) {
     throw new Error('Se requiere un prompt o imagen para generar el video');
   }
 
@@ -288,7 +354,7 @@ export async function generateGoogleVideo(modelContext, payload, apiKey) {
   const completed = await pollVeoOperation(operationName, trimmedKey);
   const videoUri = extractVideoUri(completed);
   if (!videoUri) {
-    throw new Error(`Veo/${usedApiModel} completó sin URL de video`);
+    throw new Error(buildVeoCompletionError(completed, usedApiModel));
   }
 
   const endpoint = modelContext.endpoint || modelId;

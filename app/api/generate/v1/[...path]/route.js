@@ -70,14 +70,16 @@ export async function POST(request, { params }) {
       || message.includes('Sora')
       || message.includes('bloqueó')
       || message.includes('Se requiere un prompt')
-      || message.includes('Se requiere un prompt o imagen')
+      || message.includes('bloqueó el video')
+      || message.includes('políticas de contenido')
       || message.includes('Configura tu clave')
       || message.includes('API key')
       || message.includes('clave de Google')
       || message.includes('archivo temporal')
       || message.includes('imagen de referencia')
       || message.includes('imagen subida solo funciona')
-      || message.includes('MuAPI')
+      || message.includes('FAL_KEY')
+      || message.includes('fal.ai')
       || /\(4\d\d\)/.test(message)
     ) {
       status = 400;

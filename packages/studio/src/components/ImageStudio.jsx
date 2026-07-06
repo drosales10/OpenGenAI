@@ -39,7 +39,7 @@ async function downloadImage(url, filename) {
 
 // ─── UploadButton (inline picker) ───────────────────────────────────────────
 
-function UploadButton({ apiKey, maxImages, onSelect, onClear, initialUrls = [], label = null }) {
+function UploadButton({ apiKey, modelId, maxImages, onSelect, onClear, initialUrls = [], label = null }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [selectedEntries, setSelectedEntries] = useState([]); // [{url, thumbnail}]
@@ -140,7 +140,7 @@ function UploadButton({ apiKey, maxImages, onSelect, onClear, initialUrls = [], 
 
           try {
             const uploadedUrl = await uploadMediaForModel(apiKey, file, {
-              modelId: selectedModelId,
+              modelId,
               onProgress: (pct) => {
                 setLastUploadProgress(pct);
                 setUploadHistory((prev) =>
@@ -1237,6 +1237,7 @@ export default function ImageStudio({
           <div className="flex items-center gap-2">
             <UploadButton
               apiKey={apiKey}
+              modelId={selectedModelId}
               maxImages={maxImages}
               onSelect={handleUploadSelect}
               onClear={handleUploadClear}
@@ -1245,6 +1246,7 @@ export default function ImageStudio({
             {imageMode && getI2IModelById(selectedModelId)?.swapField && (
               <UploadButton
                 apiKey={apiKey}
+                modelId={selectedModelId}
                 maxImages={1}
                 onSelect={({ urls }) => setSwapImageUrl(urls[0] || null)}
                 onClear={() => setSwapImageUrl(null)}

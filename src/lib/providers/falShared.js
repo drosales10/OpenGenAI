@@ -68,6 +68,49 @@ export function extractFalMediaUrl(result) {
   return extractFalVideoUrl(result) || extractFalAudioUrl(result) || extractFalImageUrl(result);
 }
 
+export async function falUploadBytes(buffer, mimeType, apiKey, fileName = 'upload.bin') {
+  const trimmedKey = String(apiKey || '').trim();
+  if (!trimmedKey) throw new Error('Clave de fal.ai no configurada');
+
+  const initResponse = await fetch(
+    'https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Key ${trimmedKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        content_type: mimeType || 'application/octet-stream',
+        file_name: fileName,
+      }),
+    }
+  );
+
+  const initData = await initResponse.json().catch(() => ({}));
+  if (!initResponse.ok) {
+    throw parseFalError(initData, initResponse.status);
+  }
+
+  const uploadUrl = initData.upload_url;
+  const fileUrl = initData.file_url;
+  if (!uploadUrl || !fileUrl) {
+    throw new Error('fal.ai: respuesta de subida incompleta');
+  }
+
+  const putResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': mimeType || 'application/octet-stream' },
+    body: buffer,
+  });
+
+  if (!putResponse.ok) {
+    throw new Error(`fal.ai: error al subir imagen (${putResponse.status})`);
+  }
+
+  return fileUrl;
+}
+
 export async function falQueueRun(
   endpointId,
   input,

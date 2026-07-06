@@ -197,7 +197,7 @@ export function inferProviderForModel(model = {}) {
   if (/runway/.test(haystack)) {
     return 'runway';
   }
-  if (/\bwan[-\d]|wan2|wan22/.test(haystack)) {
+  if (/\bwan[-\d]|wan2|wan22|generate_wan|wan_ai_effects/.test(haystack)) {
     return 'wan';
   }
   if (/sdxl|stable-diffusion|stability/.test(haystack)) {

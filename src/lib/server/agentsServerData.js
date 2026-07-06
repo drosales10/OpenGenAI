@@ -1,76 +1,49 @@
-import { cookies } from 'next/headers';
-import { findUserByInternalApiKey } from '@/src/lib/db/apiKeys';
-import { resolveApiKeyForRouteGroup } from '@/src/lib/db/providerCredentials';
+import { getAgentBySlugOrPublicId } from '@/src/lib/db/agents';
+import { getConversationHistory } from '@/src/lib/db/agentConversations';
+import { ensureLocalAdminUser } from '@/src/lib/db/apiKeys';
+import { bootstrapDatabase } from '@/src/lib/db/bootstrap';
 
-const MUAPI_BASE = 'https://api.muapi.ai';
+let schemaReady = false;
+
+async function ensureSchema() {
+  if (schemaReady) return;
+  await bootstrapDatabase();
+  schemaReady = true;
+}
 
 /**
- * Resuelve la clave MuAPI en el servidor para páginas /agents/*.
- * Orden: cookie muapi_key → cookie internal_api_key + credenciales DB → null
+ * Resuelve usuario para SSR de páginas /agents/*.
+ * Usa clave interna/muapi si existe; si no, admin local.
  */
-export async function resolveServerMuapiKey(routeGroup = 'agents') {
-  const cookieStore = await cookies();
-  const muapiCookie = cookieStore.get('muapi_key')?.value;
-  if (muapiCookie) return muapiCookie;
-
-  let internalCookie = cookieStore.get('internal_api_key')?.value;
-  if (!internalCookie) return null;
-
-  try {
-    internalCookie = decodeURIComponent(internalCookie);
-  } catch {
-    // usar valor crudo
-  }
-
-  const user = await findUserByInternalApiKey(internalCookie);
-  if (!user) return null;
-
-  const resolved = await resolveApiKeyForRouteGroup(routeGroup);
-  return resolved?.apiKey || null;
+export async function resolveServerAgentUser() {
+  await ensureSchema();
+  const admin = await ensureLocalAdminUser();
+  return { apiKey: null, userId: admin ? Number(admin.id) : null };
 }
 
-async function muapiFetch(path, apiKey) {
-  if (!apiKey) return null;
-  try {
-    const res = await fetch(`${MUAPI_BASE}${path}`, {
-      cache: 'no-store',
-      headers: { 'x-api-key': apiKey },
-    });
-    if (res.ok) return await res.json();
-    return null;
-  } catch {
-    return null;
-  }
+export async function fetchAgentDetailsServer(agentId, _apiKey, viewerUserId = null) {
+  await ensureSchema();
+  return getAgentBySlugOrPublicId(agentId, { viewerUserId });
 }
 
-export async function fetchAgentDetailsServer(agentId, apiKey) {
-  if (!apiKey) return null;
+export async function fetchConversationHistoryServer(agentId, conversationId, _apiKey, viewerUserId = null) {
+  await ensureSchema();
+  return getConversationHistory(agentId, conversationId, viewerUserId);
+}
 
-  const bySlug = await muapiFetch(`/agents/by-slug/${agentId}`, apiKey);
-  if (bySlug) return bySlug;
+export async function fetchMuapiAccountServer(_apiKey) {
+  await ensureSchema();
+  const admin = await ensureLocalAdminUser();
+  if (!admin) return null;
+  return {
+    email: admin.email,
+    balance: 0,
+    local: true,
+  };
+}
 
-  if (agentId.length > 20) {
-    return muapiFetch(`/agents/${agentId}`, apiKey);
-  }
+// Compat: algunas páginas aún llaman resolveServerMuapiKey
+export async function resolveServerMuapiKey(_routeGroup = 'agents') {
+  await ensureSchema();
   return null;
-}
-
-export async function fetchConversationHistoryServer(agentId, conversationId, apiKey) {
-  if (!apiKey) return null;
-
-  const bySlug = await muapiFetch(
-    `/agents/by-slug/${agentId}/${conversationId}`,
-    apiKey
-  );
-  if (bySlug) return bySlug;
-
-  if (agentId.length > 20) {
-    return muapiFetch(`/agents/${agentId}/${conversationId}`, apiKey);
-  }
-  return null;
-}
-
-export async function fetchMuapiAccountServer(apiKey) {
-  if (!apiKey) return null;
-  return muapiFetch('/api/v1/account/balance', apiKey);
 }

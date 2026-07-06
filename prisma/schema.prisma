@@ -28,6 +28,9 @@ model User {
   providerRequestLogs ProviderRequestLog[]
   adminActions        AdminAuditLog[] @relation("AdminAuditActor")
   adminTargets        AdminAuditLog[] @relation("AdminAuditTarget")
+  agents              Agent[]
+  agentConversations  AgentConversation[]
+  agentLikes          AgentLike[]
 
   @@map("users")
 }
@@ -162,4 +165,95 @@ model ModelCredential {
   @@index([moduleId], map: "model_credentials_module_idx")
   @@index([providerId], map: "model_credentials_provider_idx")
   @@map("model_credentials")
+}
+
+model AgentSkill {
+  id          String @id
+  name        String
+  description String?
+
+  agents AgentSkillLink[]
+
+  @@map("agent_skills")
+}
+
+model Agent {
+  id                 BigInt   @id @default(autoincrement())
+  publicId           String   @unique @map("public_id") @db.Uuid
+  slug               String   @unique
+  userId             BigInt?  @map("user_id")
+  name               String
+  description        String?
+  systemPrompt       String   @default("") @map("system_prompt")
+  welcomeMessage     String?  @map("welcome_message")
+  initialSuggestions Json     @default("[]") @map("initial_suggestions")
+  iconUrl            String?  @map("icon_url")
+  theme              String   @default("cosmic")
+  isTemplate         Boolean  @default(false) @map("is_template")
+  isPublished        Boolean  @default(false) @map("is_published")
+  category           String?
+  likeCount          Int      @default(0) @map("like_count")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  user          User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  skillLinks    AgentSkillLink[]
+  conversations AgentConversation[]
+  likes         AgentLike[]
+
+  @@index([userId], map: "agents_user_idx")
+  @@index([isTemplate, isPublished], map: "agents_template_published_idx")
+  @@map("agents")
+}
+
+model AgentSkillLink {
+  agentId BigInt @map("agent_id")
+  skillId String @map("skill_id")
+
+  agent Agent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  skill AgentSkill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, skillId])
+  @@map("agent_skill_links")
+}
+
+model AgentConversation {
+  id        String   @id @db.Uuid
+  agentId   BigInt   @map("agent_id")
+  userId    BigInt?  @map("user_id")
+  title     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  agent    Agent          @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  user     User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages AgentMessage[]
+
+  @@index([userId], map: "agent_conversations_user_idx")
+  @@map("agent_conversations")
+}
+
+model AgentMessage {
+  id             BigInt   @id @default(autoincrement())
+  conversationId String   @map("conversation_id") @db.Uuid
+  role           String
+  content        String
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversation AgentConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId], map: "agent_messages_conversation_idx")
+  @@map("agent_messages")
+}
+
+model AgentLike {
+  agentId BigInt @map("agent_id")
+  userId  BigInt @map("user_id")
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([agentId, userId])
+  @@map("agent_likes")
 }

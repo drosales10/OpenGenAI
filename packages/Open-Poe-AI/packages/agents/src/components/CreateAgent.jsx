@@ -52,7 +52,8 @@ const CreateAgent = ({ useUser, usedIn }) => {
       const createResponse = await axios.post(`${BASE_URL}`, createPayload);
       if (createResponse.status === 200 || createResponse.status === 201) {
         const createdAgent = createResponse.data;
-        router.push(`/agents/edit/${createdAgent.agent_id}`);
+        const editId = createdAgent.slug || createdAgent.agent_id || createdAgent.id;
+        router.push(`/agents/edit/${editId}`);
       }
     } catch (err) {
       console.error("Agent creation failed:", err);

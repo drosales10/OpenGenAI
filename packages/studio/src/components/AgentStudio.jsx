@@ -159,7 +159,6 @@ export default function AgentStudio({ apiKey }) {
   );
 
   useEffect(() => {
-    if (!apiKey) return;
     let cancelled = false;
 
     async function load() {
@@ -169,13 +168,13 @@ export default function AgentStudio({ apiKey }) {
       setConversations([]);
       try {
         if (activeMainTab === "templates") {
-          const data = await getTemplateAgents(apiKey);
+          const data = await getTemplateAgents(apiKey || "");
           if (!cancelled) setAgents(data);
         } else if (activeMainTab === "my-agents") {
-          const data = await getUserAgents(apiKey);
+          const data = await getUserAgents(apiKey || "");
           if (!cancelled) setAgents(data);
         } else if (activeMainTab === "my-chats") {
-          const data = await getUserConversations(apiKey);
+          const data = await getUserConversations(apiKey || "");
           if (!cancelled) setConversations(data);
         }
       } catch (err) {

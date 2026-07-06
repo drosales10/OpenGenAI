@@ -3,6 +3,8 @@ import { resolveMuapiProxyAuth } from '@/src/lib/server/muapiProxyAuth';
 import { recordProviderRequest } from '@/src/lib/db/providerUsage';
 import { enforceMuapiQuota } from '@/src/lib/server/muapiQuota';
 import { extractProviderRequestContext } from '@/src/lib/server/providerRequestContext';
+import { getJobByRequestId } from '@/src/lib/db/jobs';
+import { formatLocalAgentJobResult } from '@/src/lib/server/agentChat';
 
 const MUAPI_BASE = 'https://api.muapi.ai';
 
@@ -40,6 +42,18 @@ export async function GET(request, { params }) {
     const path = pathSegments.join('/');
     
     const { search } = new URL(request.url);
+
+    const predictionMatch = path.match(/^predictions\/([^/]+)\/result$/);
+    if (predictionMatch) {
+        const localJob = await getJobByRequestId(predictionMatch[1]);
+        if (localJob?.job_type === 'agent_chat') {
+            const formatted = formatLocalAgentJobResult(localJob);
+            if (formatted) {
+                return NextResponse.json(formatted, { status: 200 });
+            }
+        }
+    }
+
     const targetUrl = `${MUAPI_BASE}/api/v1/${path}${search}`;
 
     const headers = cleanHeaders(request);

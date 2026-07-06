@@ -1,17 +1,11 @@
 import AgentChatClient from "../AgentChatClient";
 import {
-  resolveServerMuapiKey,
+  resolveServerAgentUser,
   fetchAgentDetailsServer,
   fetchConversationHistoryServer,
   fetchMuapiAccountServer,
 } from "@/src/lib/server/agentsServerData";
 
-/**
- * Server component — fetches both agentDetails and initialHistory
- * using muapi_key cookie or internal_api_key + DB credentials.
- *
- * URL: /agents/[agent_id]/[conversation_id]
- */
 export async function generateMetadata() {
   return {
     title: `Agent Chat — Open Generative AI`,
@@ -20,12 +14,12 @@ export async function generateMetadata() {
 
 export default async function AgentConversationPage({ params }) {
   const { agent_id, conversation_id } = await params;
-  const apiKey = await resolveServerMuapiKey("agents");
+  const { userId } = await resolveServerAgentUser();
 
   const [agentDetails, initialHistory, userData] = await Promise.all([
-    fetchAgentDetailsServer(agent_id, apiKey),
-    fetchConversationHistoryServer(agent_id, conversation_id, apiKey),
-    fetchMuapiAccountServer(apiKey),
+    fetchAgentDetailsServer(agent_id, null, userId),
+    fetchConversationHistoryServer(agent_id, conversation_id, null, userId),
+    fetchMuapiAccountServer(null),
   ]);
 
   return (

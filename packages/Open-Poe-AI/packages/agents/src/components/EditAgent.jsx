@@ -129,7 +129,7 @@ const EditAgent = ({ useUser, usedIn }) => {
       setSaving(true);
       await axios.delete(`${BASE_URL}/by-slug/${id}`);
       toast.success("Agent deleted successfully");
-      router.push("/agents");
+      router.push("/studio/agents");
     } catch (err) {
       console.error("Delete error:", err);
       toast.error("Failed to delete agent");
@@ -258,7 +258,7 @@ const EditAgent = ({ useUser, usedIn }) => {
       setSuccess(true);
       toast.success("Agent profile updated successfully!");
       setTimeout(() => {
-        router.push("/agents");
+        router.push("/studio/agents");
       }, 1500);
     } catch (err) {
       console.error("Error updating agent:", err);
@@ -295,7 +295,7 @@ const EditAgent = ({ useUser, usedIn }) => {
           {error}
         </p>
         <Link 
-          href="/agents"
+          href="/studio/agents"
           className="mt-4 px-8 py-3 bg-gray-900 dark:bg-primary text-white font-bold rounded-xl hover:bg-gray-800 dark:hover:bg-primary/90 transition-all shadow-lg active:scale-95"
         >
           Return to My Agents
@@ -308,7 +308,7 @@ const EditAgent = ({ useUser, usedIn }) => {
     <div className="flex-1 flex flex-col gap-8 items-center w-full max-w-[95%] sm:max-w-[90%] lg:max-w-[80%] relative">
       <div className="flex items-center justify-between pb-2 border-b border-gray-50 dark:border-divider w-full">
         <Link 
-          href="/agents"
+          href="/studio/agents"
           className="flex items-center gap-2 text-gray-500 hover:text-gray-900 dark:text-secondary-text dark:hover:text-primary-text transition-colors text-sm font-medium"
         >
           <IoChevronBack className="w-4 h-4" />
@@ -338,11 +338,10 @@ const EditAgent = ({ useUser, usedIn }) => {
             <IoTrashOutline className="w-4 h-4" />
           </button>
           <Link 
-            href="/docs/agents"
-            target="_blank"
+            href="/studio/agents"
             className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 dark:bg-secondary-bg border border-gray-100 dark:border-divider rounded-lg text-xs font-bold text-blue-600 dark:text-primary hover:bg-blue-50 dark:hover:bg-primary-bg transition-all active:scale-95 shadow-sm"
           >
-            Docs
+            My Agents
           </Link>
         </div>
       </div>

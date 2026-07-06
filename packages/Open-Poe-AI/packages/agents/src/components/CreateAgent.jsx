@@ -72,7 +72,7 @@ const CreateAgent = ({ useUser, usedIn }) => {
     <div className="flex-1 flex flex-col gap-8 items-center w-full max-w-[95%] sm:max-w-[90%] lg:max-w-[80%] relative pb-12">
       <div className="flex items-start gap-2 w-full">
         <Link
-          href="/agents"
+          href="/studio/agents"
           className="p-2 hover:bg-gray-100 dark:hover:bg-secondary-bg rounded-full transition-colors group"
         >
           <IoArrowBackOutline className="w-4 h-4 text-gray-800 dark:text-primary-text group-hover:scale-110 transition-transform" />

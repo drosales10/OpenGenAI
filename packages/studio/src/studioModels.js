@@ -11,7 +11,7 @@ export {
   isComfyuiModelId,
 } from './comfyuiModels.js';
 
-import { t2iModels, t2vModels, i2vModels, audioModels } from './models.js';
+import { t2iModels, t2vModels, i2iModels, i2vModels, audioModels } from './models.js';
 import { ollamaT2iModels } from './ollamaModels.js';
 import { localAudioModels } from './localAudioModels.js';
 import { localTtsModels } from './localTtsModels.js';

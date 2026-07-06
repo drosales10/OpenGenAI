@@ -99,17 +99,27 @@ function registerModel(model, moduleId, kind) {
   return entry;
 }
 
+function kindPriority(kind) {
+  if (kind === 'i2i' || kind === 'i2v') return 2;
+  if (kind === 't2i' || kind === 't2v') return 1;
+  return 0;
+}
+
 function buildRegistry() {
   const byModule = {};
 
   for (const [moduleId, groups] of Object.entries(MODULE_MODEL_MAP)) {
-    const models = [];
+    const seen = new Map();
     for (const group of groups) {
       for (const model of group.models || []) {
-        models.push(registerModel(model, moduleId, group.kind));
+        const entry = registerModel(model, moduleId, group.kind);
+        const existing = seen.get(entry.id);
+        if (!existing || kindPriority(group.kind) > kindPriority(existing.kind)) {
+          seen.set(entry.id, entry);
+        }
       }
     }
-    byModule[moduleId] = models;
+    byModule[moduleId] = [...seen.values()];
   }
 
   return byModule;

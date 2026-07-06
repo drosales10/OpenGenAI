@@ -31,7 +31,7 @@ function StatusBadge({ configured, supportsDirect, routing }) {
 }
 
 function ModelKeyRow({ model, stored, onSave, onDelete, disabled }) {
-  const isHostProvider = ['ollama', 'wan2gp', 'local_audio'].includes(model.provider_id);
+  const isHostProvider = ['ollama', 'wan2gp', 'local_audio', 'comfyui'].includes(model.provider_id);
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -330,7 +330,7 @@ export default function ProviderKeysSettings({
                       </div>
                       {mod.models.map((model) => (
                         <ModelKeyRow
-                          key={model.model_key}
+                          key={`${mod.id}:${model.model_key}`}
                           model={{ ...model, module_id: mod.id }}
                           stored={credMap[model.model_key]}
                           onSave={handleSaveModel}

@@ -17,6 +17,34 @@ import { FaAngleRight } from "react-icons/fa6";
 
 const BASE_URL = "/api/agents"; // "https://api.muapi.ai/agents";
 
+function formatAxiosError(err) {
+  if (!err?.response) {
+    return err?.message || "Something went wrong. Check browser console.";
+  }
+  const { status, data } = err.response;
+  const detail = data?.error ?? data?.detail ?? data?.message;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item?.msg || item).filter(Boolean).join(", ");
+  }
+  if (status === 404) {
+    return "Agent or conversation not found (404). Try starting a new chat.";
+  }
+  if (status === 401) {
+    return "Missing API key. Configure MuAPI or internal API key in Settings.";
+  }
+  if (status === 412) {
+    return "MuAPI key is not configured on the server. Open Settings → API Keys.";
+  }
+  return `Request failed (${status})`;
+}
+
+async function postAgentChat(slug, payload, { omitConversationId = false } = {}) {
+  const body = { ...payload };
+  if (omitConversationId) delete body.conversation_id;
+  return axios.post(`${BASE_URL}/by-slug/${slug}/chat`, body);
+}
+
 const formatMessageTime = (date) => {
   if (!date) return "";
   return new Intl.DateTimeFormat("en-US", {
@@ -254,7 +282,9 @@ const ChatPage = ({
             conversationIdRef.current = effectiveConversationId;
           }
         } catch (err) {
-          console.error("Failed to fetch conversation history:", err);
+          if (err?.response?.status !== 404) {
+            console.error("Failed to fetch conversation history:", err);
+          }
         }
       }
     };
@@ -348,8 +378,8 @@ const ChatPage = ({
   useEffect(() => {
     if (initialAgentDetails) {
       setAgentDetails(initialAgentDetails);
-    } else {
-      // fetchAgentDetails();
+    } else if (lowerAgentSlug) {
+      fetchAgentDetails();
     }
   }, [lowerAgentSlug, initialAgentDetails]);
 
@@ -363,7 +393,11 @@ const ChatPage = ({
             if (convId === effectiveConversationId) {
               sessionStorage.removeItem('pending_first_msg');
               setTimeout(() => {
-                handleSendMessage(null, text, pendingAttachments);
+                void handleSendMessage(null, text, pendingAttachments).catch((err) => {
+                  console.error("Failed to send pending first message:", err);
+                  setError(formatAxiosError(err));
+                  setIsStreaming(false);
+                });
               }, 100);
             }
           } catch (e) {
@@ -571,15 +605,29 @@ const ChatPage = ({
         return;
       }
 
-      const initialRes = await axios.post(
-        `${BASE_URL}/by-slug/${lowerAgentSlug}/chat`,
-        {
-          message: userText,
-          stream: false,
-          conversation_id: currentConvId,
-          attachments: userMessage.attachments,
+      const chatPayload = {
+        message: userText,
+        stream: false,
+        conversation_id: currentConvId,
+        attachments: userMessage.attachments,
+      };
+
+      let initialRes;
+      try {
+        initialRes = await postAgentChat(lowerAgentSlug, chatPayload);
+      } catch (chatErr) {
+        if (chatErr?.response?.status === 404 && currentConvId) {
+          initialRes = await postAgentChat(lowerAgentSlug, chatPayload, {
+            omitConversationId: true,
+          });
+          if (initialRes.data?.conversation_id) {
+            conversationIdRef.current = initialRes.data.conversation_id;
+            router.replace(`/agents/${lowerAgentSlug}/${initialRes.data.conversation_id}`);
+          }
+        } else {
+          throw chatErr;
         }
-      );
+      }
 
       const { request_id } = initialRes.data;
       if (!request_id) throw new Error("No Request ID returned from agent");
@@ -590,7 +638,9 @@ const ChatPage = ({
 
       while (!isComplete && errors < 5) {
         try {
-          const pollRes = await axios.get(`/api/api/v1/predictions/${request_id}/result`);
+          const pollRes = await axios.get(`/api/api/v1/predictions/${request_id}/result`, {
+            headers: { "x-muapi-route-group": "agents" },
+          });
           const data = pollRes.data;
 
           // data format from backend execute_agent_chat_background:
@@ -652,6 +702,9 @@ const ChatPage = ({
           }
 
         } catch (pollErr) {
+          if (pollErr?.response?.status === 404) {
+            throw pollErr;
+          }
           console.error("Polling error", pollErr);
           errors++;
           await new Promise(r => setTimeout(r, 2000));
@@ -662,13 +715,7 @@ const ChatPage = ({
 
     } catch (err) {
       console.log("Agent error:", err);
-      let errorMessage = err.message || "Something went wrong. Check browser console";
-      if (err.response) {
-        const { status, data } = err.response;
-        errorMessage = data?.error || "Not enough credits";
-      } else {
-        errorMessage = err.message;
-      }
+      const errorMessage = formatAxiosError(err);
       setError(errorMessage);
       if (!currentAssistantMsgRef.current.content) {
         setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId));

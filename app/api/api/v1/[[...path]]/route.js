@@ -18,7 +18,16 @@ function cleanHeaders(request) {
     headers.delete('host');
     headers.delete('connection');
     headers.delete('cookie');
+    headers.delete('x-muapi-route-group');
     return headers;
+}
+
+function resolvePredictionsRouteGroup(request) {
+    const hint = request.headers.get('x-muapi-route-group');
+    if (hint === 'agents' || hint === 'generation' || hint === 'workflow' || hint === 'app') {
+        return hint;
+    }
+    return 'generation';
 }
 
 // Proxies /api/api/v1/* -> https://api.muapi.ai/api/v1/*
@@ -34,7 +43,8 @@ export async function GET(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/api/v1/${path}${search}`;
 
     const headers = cleanHeaders(request);
-    const auth = await resolveMuapiProxyAuth(request, getApiKey, 'generation');
+    const routeGroup = resolvePredictionsRouteGroup(request);
+    const auth = await resolveMuapiProxyAuth(request, getApiKey, routeGroup);
     if (!auth.ok) return auth.response;
     const quota = await enforceMuapiQuota({ routeGroup: 'double-api-v1', userId: auth.userId, projectId: requestContext.projectId });
     if (!quota.ok) {
@@ -65,7 +75,8 @@ export async function POST(request, { params }) {
     const targetUrl = `${MUAPI_BASE}/api/v1/${path}${search}`;
 
     const headers = cleanHeaders(request);
-    const auth = await resolveMuapiProxyAuth(request, getApiKey, 'generation');
+    const routeGroup = resolvePredictionsRouteGroup(request);
+    const auth = await resolveMuapiProxyAuth(request, getApiKey, routeGroup);
     if (!auth.ok) return auth.response;
     const quota = await enforceMuapiQuota({ routeGroup: 'double-api-v1', userId: auth.userId, projectId: requestContext.projectId });
     if (!quota.ok) {

@@ -129,7 +129,11 @@ export default function AgentStudio({ apiKey }) {
   // Navigate to the standalone /agents page — AiAgent handles its own routing there
   const handleSelectAgent = useCallback(
     (agent) => {
-      const id = agent.agent_id || agent.id;
+      const id =
+        agent.slug ||
+        agent.agent_slug ||
+        agent.agent_id ||
+        agent.id;
       router.push(`/agents/${id}`);
     },
     [router]

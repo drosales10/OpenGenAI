@@ -17,6 +17,32 @@ const BASE_URL = (typeof window !== 'undefined' && window.location?.protocol?.st
 const PROXY_WF_BASE = '/api/workflow';
 const INTERNAL_API_KEY_STORAGE = 'internal_api_key';
 
+function normalizeApiErrorDetail(value) {
+    if (value == null || value === '') return '';
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => normalizeApiErrorDetail(item))
+            .filter(Boolean)
+            .join('; ');
+    }
+    if (typeof value === 'object') {
+        if (value.error) return normalizeApiErrorDetail(value.error);
+        if (value.message) return String(value.message);
+        if (value.msg) {
+            const loc = Array.isArray(value.loc) ? value.loc.join('.') : '';
+            return loc ? `${loc}: ${value.msg}` : String(value.msg);
+        }
+        if (value.detail) return normalizeApiErrorDetail(value.detail);
+        try {
+            return JSON.stringify(value);
+        } catch {
+            return String(value);
+        }
+    }
+    return String(value);
+}
+
 function getStoredInternalApiKey() {
     if (typeof window === 'undefined') return '';
     try {
@@ -233,14 +259,15 @@ async function submitAndPoll(endpoint, payload, key, onRequestId, maxAttempts = 
         let errText = await response.text();
         try {
             const errJson = JSON.parse(errText);
-            if (errJson.error) errText = errJson.error;
+            if (errJson.error) errText = normalizeApiErrorDetail(errJson.error);
+            else if (errJson.message) errText = normalizeApiErrorDetail(errJson.message);
         } catch { /* keep raw text */ }
         notifyAuthRequired(response.status, errText);
         throw new Error(`API Request Failed: ${response.status} ${response.statusText} - ${String(errText).slice(0, 500)}`);
     }
     const submitData = await response.json();
     if (submitData.ok === false) {
-        throw new Error(submitData.error || 'Generation failed');
+        throw new Error(normalizeApiErrorDetail(submitData.error) || 'Generation failed');
     }
 
     const directUrl = submitData.url || submitData.outputs?.[0];

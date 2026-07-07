@@ -188,7 +188,11 @@ export async function routeGeneration(endpoint, payload, { legacyApiKey = null }
   }
 
   if (useDirect && credentials.provider === 'fal' && isFalModel(modelContext)) {
-    const result = await generateFalImage(modelContext, payload, credentials.apiKey);
+    const falPayload = await hydratePayloadStagingMedia(payload, {
+      target: 'fal',
+      apiKey: credentials.apiKey,
+    });
+    const result = await generateFalImage(modelContext, falPayload, credentials.apiKey);
     return {
       ...result,
       routing: 'direct',
@@ -226,7 +230,11 @@ export async function routeGeneration(endpoint, payload, { legacyApiKey = null }
   }
 
   if (useDirect && credentials.provider === 'wan' && isFalWanImageModel(modelContext)) {
-    const result = await generateFalWanImage(modelContext, payload, credentials.apiKey);
+    const falPayload = await hydratePayloadStagingMedia(payload, {
+      target: 'fal',
+      apiKey: credentials.apiKey,
+    });
+    const result = await generateFalWanImage(modelContext, falPayload, credentials.apiKey);
     return {
       ...result,
       routing: 'direct',

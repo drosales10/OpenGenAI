@@ -17,14 +17,44 @@ export function resolveFalApiKeyFromEnv() {
   return key?.trim() || null;
 }
 
+function formatFalErrorPart(value) {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        if (item?.msg) {
+          const loc = Array.isArray(item.loc) ? item.loc.join('.') : '';
+          return loc ? `${loc}: ${item.msg}` : item.msg;
+        }
+        return formatFalErrorPart(item);
+      })
+      .filter(Boolean)
+      .join('; ');
+  }
+  if (typeof value === 'object') {
+    if (value.message) return String(value.message);
+    if (value.msg) return String(value.msg);
+    if (value.detail) return formatFalErrorPart(value.detail);
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 function parseFalError(data, status) {
   const msg =
-    data?.detail
-    || data?.message
-    || data?.error
-    || (typeof data === 'string' ? data : null)
-    || JSON.stringify(data).slice(0, 400);
-  return new Error(`fal.ai (${status}): ${msg}`);
+    formatFalErrorPart(data?.detail)
+    || formatFalErrorPart(data?.message)
+    || formatFalErrorPart(data?.error)
+    || (typeof data === 'string' ? data : '')
+    || formatFalErrorPart(data);
+
+  return new Error(`fal.ai (${status}): ${msg || 'Error de validación en la petición'}`);
 }
 
 export function extractFalImageUrl(result) {
